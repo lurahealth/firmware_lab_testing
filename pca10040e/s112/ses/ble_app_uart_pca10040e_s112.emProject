@@ -138,7 +138,8 @@
     </folder>
     <configuration
       Name="Release"
-      c_user_include_directories=".\;../../../../../../components/libraries/fds\;../../../../../../components/libraries/fstorage\;../../../../../../components/libraries/experimental_section_vars\;../../../../../../components/ble/peer_manager/" />
+      c_user_include_directories=".\;../../../../../../components/libraries/fds\;../../../../../../components/libraries/fstorage\;../../../../../../components/libraries/experimental_section_vars\;../../../../../../components/ble/peer_manager/"
+      gcc_optimization_level="None" />
   </project>
   <configuration
     Name="Release"

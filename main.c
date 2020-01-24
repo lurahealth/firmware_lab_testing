@@ -181,13 +181,13 @@ static ble_uuid_t m_adv_uuids[]          =                                      
 #define ENABLE_ANALOG_PIN 4
 
 /* GLOBALS */
-static   uint32_t AVG_PH_VAL       = 0;
-static   uint32_t AVG_BATT_VAL     = 0;
-static   uint32_t AVG_TEMP_VAL     = 0;
-bool              PH_IS_READ       = false;
-bool              BATTERY_IS_READ  = false;
-bool              SAADC_CALIBRATED = false;
-bool              CONNECTION_MADE  = false;
+uint32_t AVG_PH_VAL        = 0;
+uint32_t AVG_BATT_VAL      = 0;
+uint32_t AVG_TEMP_VAL      = 0;
+bool      PH_IS_READ       = false;
+bool      BATTERY_IS_READ  = false;
+bool      SAADC_CALIBRATED = false;
+bool      CONNECTION_MADE  = false;
 
 static const nrf_drv_timer_t   m_timer = NRF_DRV_TIMER_INSTANCE(1);
 static       nrf_saadc_value_t m_buffer_pool[1][SAMPLES_IN_BUFFER];
@@ -788,40 +788,6 @@ static inline void saadc_sampling_event_enable(void)
 }
 
 
-/* Function for converting numbers > 9 to byte arrays in ASCII format
- * @params: Averaged value read from SAADC, ptr to byte array
- */
-static inline void num_to_byte_arr(uint8_t *data_arr, uint32_t avg_val)
-{
-    uint8_t dig1, dig2, dig3;
-    if(avg_val > 99) {
-        dig1 = avg_val % 10;
-        dig2 = ((avg_val % 100) - dig1) / 10;
-        dig3 = (avg_val - (dig1 + (dig2 * 10))) / 100;
-    
-        // Convert to ASCII values
-        data_arr[0] = dig3 + 48;
-        data_arr[1] = dig2 + 48;
-        data_arr[2] = dig1 + 48;
-    }
-    else if(avg_val > 9) {
-        dig3 = 0;
-        dig1 = avg_val % 10;
-        dig2 = ((avg_val % 100) - dig1) / 10;
-
-        // Convert to ASCII values
-        data_arr[0] = dig2 + 48;
-        data_arr[1] = dig1 + 48;
-    }
-    else {
-        dig3 = 0;
-        dig2 = 0;
-        dig1 = avg_val;
-        // Convert to ASCII value
-        data_arr[0] = avg_val + 48;
-    }
-}
-
 static inline void restart_saadc(void)
 {
     nrfx_timer_uninit(&m_timer);
@@ -833,174 +799,67 @@ static inline void restart_saadc(void)
     enable_pH_voltage_reading(); 
 }
 
-// Integers can have maximum 3 digits with 8-bit SAADC output
-static inline int length_of_int(int x)
+
+// Pack integer values into byte array to send via bluetooth
+void create_bluetooth_packet(uint32_t ph_val,
+                             uint32_t batt_val,        
+                             uint32_t temp_val, 
+                             uint8_t* total_packet)
 {
-    if (x >= 100)        return 3;
-    if (x >= 10)         return 2;
-    return 1;
-}
+    /*
+      {0,0,0,0,44,    pH value arr[0-3], comma arr[4]
+       0,0,0,0,44,    temperature arr[5-8], comma arr[9]
+       0,0,0,0,10};   battery value arr[10-13], EOL arr[14]
+    */
 
-/* This function combines the ph_data and temp_data into one bluetooth
- * packet. The packet follows the format [ph_data,temp_data\n] where
- * data fields are between 1-3 bytes each (one per digit). 
- */
-static inline uint8_t* format_bluetooth_packet(uint8_t*  ph_data,  
-                                               uint8_t*  batt_data,    
-                                               uint8_t*  temp_data,
-                                               uint8_t*  total_packet, 
-                                               uint16_t* total_size)
-{
-    num_to_byte_arr(temp_data, AVG_TEMP_VAL);
-    num_to_byte_arr(batt_data, AVG_BATT_VAL);
-    // Plus two for comma, plus one for EOL
-    *total_size = length_of_int(AVG_PH_VAL) + length_of_int(AVG_TEMP_VAL) 
-                                            + length_of_int(AVG_BATT_VAL) + 2 + 1;
-    NRF_LOG_INFO("TOTAL SIZE: %d\n", *total_size);
-    total_packet = (uint8_t*) malloc(sizeof(uint8_t) * (*total_size));
-    // Copy pH data, copy temp data, add comma and EOL
-    memcpy(total_packet, ph_data, length_of_int(AVG_PH_VAL));
-    memcpy(total_packet + length_of_int(AVG_PH_VAL) + 1, 
-                        temp_data, length_of_int(AVG_TEMP_VAL));
-    memcpy(total_packet + length_of_int(AVG_PH_VAL) + 2 + length_of_int(AVG_TEMP_VAL), 
-                        batt_data, length_of_int(AVG_BATT_VAL));
-    total_packet[length_of_int(AVG_PH_VAL)] = 44; // comma
-    total_packet[length_of_int(AVG_PH_VAL)+1+length_of_int(AVG_TEMP_VAL)] = 44; // comma
-    total_packet[*total_size - 1] = 10; // EOL
-    return total_packet;
-}
+    uint32_t temp = 0;                  // hold intermediate divisions of variables
+    uint32_t ASCII_DIG_BASE = 48;
 
-static inline uint8_t* create_bluetooth_packet(uint32_t ph_val,
-                                               uint32_t batt_val,        
-                                               uint32_t temp_val, 
-                                               uint8_t* total_packet,  
-                                               uint16_t* total_size)
-{
-    uint8_t threedig_PH_data  [3] = {0, 0, 0};
-    uint8_t threedig_BATT_data[3] = {0, 0, 0};
-    uint8_t threedig_TEMP_data[3] = {0, 0, 0};
-    uint8_t twodig_PH_data    [2] = {0, 0};
-    uint8_t twodig_BATT_data  [2] = {0, 0};
-    uint8_t twodig_TEMP_data  [2] = {0, 0};
-    uint8_t onedig_PH_data    [1] = {0};
-    uint8_t onedig_BATT_data  [1] = {0};
-    uint8_t onedig_TEMP_data  [1] = {0};
+    NRF_LOG_INFO("arr[i] = %u\n", total_packet[0]);
 
-    uint8_t* packet;
-
-    if(AVG_PH_VAL > 99) {
-        num_to_byte_arr(threedig_PH_data, AVG_PH_VAL);
-        // Convert temp number to appropriate byte array
-        if(AVG_TEMP_VAL > 99) {
-            if(AVG_BATT_VAL > 99)
-                packet = format_bluetooth_packet(threedig_PH_data, threedig_BATT_data, threedig_TEMP_data,
-                                                                            total_packet, total_size);
-            else if(AVG_BATT_VAL > 9)
-                packet = format_bluetooth_packet(threedig_PH_data, twodig_BATT_data, threedig_TEMP_data,
-                                                                            total_packet, total_size);
-            else
-                packet = format_bluetooth_packet(threedig_PH_data, onedig_BATT_data, threedig_TEMP_data,
-                                                                            total_packet, total_size);
-        }
-        else if(AVG_TEMP_VAL > 9) {
-            if(AVG_BATT_VAL > 99)
-                packet = format_bluetooth_packet(threedig_PH_data, threedig_BATT_data, twodig_TEMP_data,
-                                                                            total_packet, total_size);
-            else if(AVG_BATT_VAL > 9)
-                packet = format_bluetooth_packet(threedig_PH_data, twodig_BATT_data, twodig_TEMP_data,
-                                                                            total_packet, total_size);
-            else
-                packet = format_bluetooth_packet(threedig_PH_data, onedig_BATT_data, twodig_TEMP_data,
-                                                                            total_packet, total_size);
-        }
+    // Pack ph_val into appropriate location
+    temp = ph_val;
+    for(int i = 3; i >= 0; i--){
+        if (i == 3) total_packet[i] = (uint8_t)(temp % 10 + ASCII_DIG_BASE);
         else {
-            if(AVG_BATT_VAL > 99)
-                packet = format_bluetooth_packet(threedig_PH_data, threedig_BATT_data, onedig_TEMP_data,
-                                                                            total_packet, total_size);
-            else if(AVG_BATT_VAL > 9)
-                packet = format_bluetooth_packet(threedig_PH_data, twodig_BATT_data, onedig_TEMP_data,
-                                                                            total_packet, total_size);
-            else
-                packet = format_bluetooth_packet(threedig_PH_data, onedig_BATT_data, onedig_TEMP_data,
-                                                                            total_packet, total_size);
+            temp = temp / 10;
+            total_packet[i] = (uint8_t)(temp % 10 + ASCII_DIG_BASE);
+            NRF_LOG_INFO("total_packet[%d]: %u", total_packet[i]);
         }
     }
-    else if(AVG_PH_VAL > 9) {
-        num_to_byte_arr(twodig_PH_data, AVG_PH_VAL);
-        // Convert temp number to appropriate byte array
-        if(AVG_TEMP_VAL > 99) {
-            if(AVG_BATT_VAL > 99)
-                packet = format_bluetooth_packet(twodig_PH_data, threedig_BATT_data, threedig_TEMP_data,
-                                                                            total_packet, total_size);
-            else if(AVG_BATT_VAL > 9)
-                packet = format_bluetooth_packet(twodig_PH_data, twodig_BATT_data, threedig_TEMP_data,
-                                                                            total_packet, total_size);
-            else
-                packet = format_bluetooth_packet(twodig_PH_data, onedig_BATT_data, threedig_TEMP_data,
-                                                                            total_packet, total_size);
-        }
-        else if(AVG_TEMP_VAL > 9) {
-            if(AVG_BATT_VAL > 99)
-                packet = format_bluetooth_packet(twodig_PH_data, threedig_BATT_data, twodig_TEMP_data,
-                                                                            total_packet, total_size);
-            else if(AVG_BATT_VAL > 9)
-                packet = format_bluetooth_packet(twodig_PH_data, twodig_BATT_data, twodig_TEMP_data,
-                                                                            total_packet, total_size);
-            else
-                packet = format_bluetooth_packet(twodig_PH_data, onedig_BATT_data, twodig_TEMP_data,
-                                                                            total_packet, total_size);
-        }
-        else 
-            if(AVG_BATT_VAL > 99)
-                packet = format_bluetooth_packet(twodig_PH_data, threedig_BATT_data, onedig_TEMP_data,
-                                                                            total_packet, total_size);
-            else if(AVG_BATT_VAL > 9)
-                packet = format_bluetooth_packet(twodig_PH_data, twodig_BATT_data, onedig_TEMP_data,
-                                                                            total_packet, total_size);
-            else
-                packet = format_bluetooth_packet(twodig_PH_data, onedig_BATT_data, onedig_TEMP_data,
-                                                                            total_packet, total_size);
-    }
-    else {
-        num_to_byte_arr(onedig_PH_data, AVG_PH_VAL);
-        // Convert temp number to appropriate byte array
-        if(AVG_TEMP_VAL > 99) {
-            if(AVG_BATT_VAL > 99)
-                packet = format_bluetooth_packet(onedig_PH_data, threedig_BATT_data, threedig_TEMP_data,
-                                                                            total_packet, total_size);
-            else if(AVG_BATT_VAL > 9)
-                packet = format_bluetooth_packet(onedig_PH_data, twodig_BATT_data, threedig_TEMP_data,
-                                                                            total_packet, total_size);
-            else
-                packet = format_bluetooth_packet(onedig_PH_data, onedig_BATT_data, threedig_TEMP_data,
-                                                                            total_packet, total_size);
-        }
-        else if(AVG_TEMP_VAL > 9) {
-            if(AVG_BATT_VAL > 99)
-                packet = format_bluetooth_packet(onedig_PH_data, threedig_BATT_data, twodig_TEMP_data,
-                                                                            total_packet, total_size);
-            else if(AVG_BATT_VAL > 9)
-                packet = format_bluetooth_packet(onedig_PH_data, twodig_BATT_data, twodig_TEMP_data,
-                                                                            total_packet, total_size);
-            else
-                packet = format_bluetooth_packet(onedig_PH_data, onedig_BATT_data, twodig_TEMP_data,
-                                                                            total_packet, total_size);
-        }
+
+    // Pack temp_val into appropriate location
+    temp = temp_val;
+    for(int i = 8; i >= 5; i--){
+        if (i == 8) total_packet[i] = (uint8_t)(temp % 10 + ASCII_DIG_BASE);
         else {
-            if(AVG_BATT_VAL > 99)
-                packet = format_bluetooth_packet(onedig_PH_data, threedig_BATT_data, onedig_TEMP_data,
-                                                                            total_packet, total_size);
-            else if(AVG_BATT_VAL > 9)
-                packet = format_bluetooth_packet(onedig_PH_data, twodig_BATT_data, onedig_TEMP_data,
-                                                                            total_packet, total_size);
-            else
-                packet = format_bluetooth_packet(onedig_PH_data, onedig_BATT_data, onedig_TEMP_data,
-                                                                            total_packet, total_size);
+            temp = temp / 10;
+            total_packet[i] = (uint8_t)(temp % 10 + ASCII_DIG_BASE);
+            NRF_LOG_INFO("total_packet[%d]: %u", total_packet[i]);
         }
     }
-    return packet;    
+
+    // Pack batt_val into appropriate location
+    temp = batt_val;
+
+    for(int i = 13; i >= 10; i--){
+        if (i == 13) total_packet[i] = (uint8_t)(temp % 10 + ASCII_DIG_BASE);
+        else {
+            temp = temp / 10;
+            total_packet[i] = (uint8_t)(temp % 10 + ASCII_DIG_BASE);
+            NRF_LOG_INFO("total_packet[%d]: %u", total_packet[i]);
+        }
+    }
 }
 
+static inline uint32_t saadc_result_to_mv(uint32_t saadc_result)
+{
+    float saadc_denom   = 4095.0;
+    float saadc_vref_mv = 3000.0;
+    float saadc_res_in_mv = ((float)saadc_result/saadc_denom) * saadc_vref_mv;
+
+    return (uint32_t)saadc_res_in_mv;
+}
 
 /**
  * Function is called when SAADC reading event is done. First done event
@@ -1017,10 +876,12 @@ static inline void saadc_callback(nrf_drv_saadc_evt_t const * p_event)
     if (p_event->type == NRF_DRV_SAADC_EVT_DONE) 
     {
         ret_code_t err_code;
-        uint16_t   total_size;
-        uint32_t avg_saadc_reading = 0;
+        uint16_t   total_size = 15;
+        uint32_t   avg_saadc_reading = 0;
         // Byte array to store total packet
-        uint8_t* total_packet;
+        uint8_t total_packet[] = {48,48,48,48,44,    /* pH value, comma */
+                                  48,48,48,48,44,    /* Temperature, comma */
+                                  48,48,48,48,10};   /* Battery value, EOL */
 
         err_code = nrf_drv_saadc_buffer_convert(p_event->data.done.p_buffer, 
                                                             SAMPLES_IN_BUFFER); 
@@ -1038,7 +899,7 @@ static inline void saadc_callback(nrf_drv_saadc_evt_t const * p_event)
         avg_saadc_reading = avg_saadc_reading/(SAMPLES_IN_BUFFER - 1); 
         // If ph has not been read, read it then restart SAADC to read temp
         if (!PH_IS_READ) {
-            AVG_PH_VAL = avg_saadc_reading;
+            AVG_PH_VAL = saadc_result_to_mv(avg_saadc_reading);
             PH_IS_READ = true;
             // Uninit saadc peripheral, restart saadc, enable sampling event
             NRF_LOG_INFO("read pH val, restarting: %d", AVG_PH_VAL);
@@ -1047,7 +908,7 @@ static inline void saadc_callback(nrf_drv_saadc_evt_t const * p_event)
         } 
         // If pH has been read but not battery, read battery then restart
         else if (!(PH_IS_READ && BATTERY_IS_READ)) {
-            AVG_BATT_VAL = avg_saadc_reading;
+            AVG_BATT_VAL = saadc_result_to_mv(avg_saadc_reading);
             NRF_LOG_INFO("read batt val, restarting: %d", AVG_BATT_VAL);
             NRF_LOG_FLUSH();
             BATTERY_IS_READ = true;
@@ -1055,22 +916,22 @@ static inline void saadc_callback(nrf_drv_saadc_evt_t const * p_event)
         }
         // Once temp, batter and ph have been read, create and send data in packet
         else {
-            AVG_TEMP_VAL = avg_saadc_reading;
-            NRF_LOG_INFO("read temp val, restarting: %d", AVG_TEMP_VAL);
+            AVG_TEMP_VAL = saadc_result_to_mv(avg_saadc_reading);
+            NRF_LOG_INFO("read temp val: %d", AVG_TEMP_VAL);
             NRF_LOG_FLUSH();
-            // Convert pH number to appropriate byte array
-            total_packet = create_bluetooth_packet((uint32_t)AVG_PH_VAL, 
-                                                   (uint32_t)AVG_BATT_VAL,
-                                                   (uint32_t)AVG_TEMP_VAL, 
-                                                   total_packet, &total_size);
+  
+            // Create bluetooth data
+            create_bluetooth_packet(AVG_PH_VAL, AVG_BATT_VAL, 
+                                    AVG_TEMP_VAL, total_packet);
+
             // Send data
             err_code = ble_nus_data_send(&m_nus, total_packet, 
                                          &total_size, m_conn_handle);
+            //APP_ERROR_CHECK(err_code);
             // reset global control boolean
             PH_IS_READ = false;
             BATTERY_IS_READ = false;
-            // Free dynamic array
-            free(total_packet);
+ 
             // Turn off peripherals
             NRF_LOG_INFO("BLUETOOTH DATA SENT\n");
             NRF_LOG_FLUSH();
@@ -1188,28 +1049,28 @@ void gatt_evt_handler(nrf_ble_gatt_t * p_gatt, nrf_ble_gatt_evt_t const * p_evt)
         (p_evt->evt_id == NRF_BLE_GATT_EVT_ATT_MTU_UPDATED))
     {
         m_ble_nus_max_data_len = p_evt->params.att_mtu_effective - OPCODE_LENGTH 
-                                                                 - HANDLE_LENGTH;
-
-        ret_code_t err_code;
-
-         // Create application timer
-        err_code = app_timer_create(&m_timer_id,
-                                    APP_TIMER_MODE_SINGLE_SHOT,
-                                    single_shot_timer_handler);
-        APP_ERROR_CHECK(err_code);
-        
-        // 1 second timer intervals
-        err_code = app_timer_start(m_timer_id, APP_TIMER_TICKS(2000), NULL);
-        APP_ERROR_CHECK(err_code);
-
-        NRF_LOG_INFO("TIMER STARTED (gatt_evt_handler) \n");
-        NRF_LOG_FLUSH();
-
-        nrf_pwr_mgmt_run();
+                                                                - HANDLE_LENGTH;
+        NRF_LOG_INFO("Data len is set to 0x%X(%d)", m_ble_nus_max_data_len, 
+                                                    m_ble_nus_max_data_len);
     }
     NRF_LOG_DEBUG("ATT MTU exchange completed. central 0x%x peripheral 0x%x",
                   p_gatt->att_mtu_desired_central,
                   p_gatt->att_mtu_desired_periph);
+
+    ret_code_t err_code;
+
+    // Create application timer
+    err_code = app_timer_create(&m_timer_id,
+                                APP_TIMER_MODE_SINGLE_SHOT,
+                                single_shot_timer_handler);
+    APP_ERROR_CHECK(err_code);
+        
+    // 1 second timer intervals
+    err_code = app_timer_start(m_timer_id, APP_TIMER_TICKS(2000), NULL);
+    APP_ERROR_CHECK(err_code);
+
+    NRF_LOG_INFO("TIMER STARTED (gatt_evt_handler) \n");
+    NRF_LOG_FLUSH();
 }
 
 /**@brief Function for initializing the GATT library. */
@@ -1240,7 +1101,7 @@ int main(void)
     services_init();
     advertising_init();
     conn_params_init();
-    peer_manager_init();
+    //peer_manager_init();
     advertising_start(erase_bonds);
     // Enter main loop.
     while (true)
