@@ -1,5 +1,5 @@
 Output/ble_app_uart_pca10040e_s112\ Release/Obj/nrfx_clock.o: \
- /home/noah/programming/firmware/nRF5_SDK_15.2.0_9412b96/modules/nrfx/drivers/src/nrfx_clock.c \
+ /home/noah/programming/firmware/nRF5_SDK_15.2.0_9412b96_STABLE/modules/nrfx/drivers/src/nrfx_clock.c \
  ../../../../../../modules/nrfx/nrfx.h \
  ../../../../../../integration/nrfx/nrfx_config.h ../config/sdk_config.h \
  ../../../../../../modules/nrfx/drivers/nrfx_common.h \

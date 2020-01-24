@@ -1,7 +1,10 @@
 <!DOCTYPE CrossStudio_Session_File>
 <session>
  <Bookmarks/>
- <Breakpoints groups="Breakpoints" active_group="Breakpoints"/>
+ <Breakpoints groups="Breakpoints" active_group="Breakpoints">
+  <BreakpointListItem trigger="" line="230" counter="0" hardwareBreakpoint="" isFunctionBreakpoint="false" action="" expression="" group="Breakpoints" type="Breakpoint" state="4" filename="../../../main.c" useHWbreakpoint="false"/>
+  <Exceptions set="MemManage;UsageFault_Coprocessor;UsageFault_CheckingError;UsageFault_StateError;BusFault;ExceptionEntryReturnFault;HardFault"/>
+ </Breakpoints>
  <ExecutionProfileWindow/>
  <FrameBufferWindow>
   <FrameBufferWindow bufferHeight="-1" addressSpace="" addressText="" bufferWidth="-1"/>
@@ -22,6 +25,8 @@
   <ProjectSessionItem path="ble_app_uart_pca10040e_s112"/>
   <ProjectSessionItem path="ble_app_uart_pca10040e_s112;ble_app_uart_pca10040e_s112"/>
   <ProjectSessionItem path="ble_app_uart_pca10040e_s112;ble_app_uart_pca10040e_s112;Application"/>
+  <ProjectSessionItem path="ble_app_uart_pca10040e_s112;ble_app_uart_pca10040e_s112;nRF_BLE"/>
+  <ProjectSessionItem path="ble_app_uart_pca10040e_s112;ble_app_uart_pca10040e_s112;nRF_Libraries"/>
  </Project>
  <Register1>
   <RegisterWindow visibleNodes="CPU - Current Context/r0;CPU - Current Context/r1;CPU - Current Context/r2;CPU - Current Context/r3;CPU - Current Context/r4;CPU - Current Context/r5;CPU - Current Context/r6;CPU - Current Context/r7;CPU - Current Context/r8;CPU - Current Context/r9;CPU - Current Context/r10;CPU - Current Context/r11;CPU - Current Context/r12;CPU - Current Context/sp(r13);CPU - Current Context/lr(r14);CPU - Current Context/pc(r15);CPU - Current Context/apsr;CPU/r0;CPU/r1;CPU/r2;CPU/r3;CPU/r4;CPU/r5;CPU/r6;CPU/r7;CPU/r8;CPU/r9;CPU/r10;CPU/r11;CPU/r12;CPU/sp(r13);CPU/lr(r14);CPU/pc(r15);CPU/xpsr;CPU/msp;CPU/psp;CPU/cfbp;CPU/internal" binaryNodes="" asciiNodes="" openNodes="CPU - Current Context" name="ble_app_uart_pca10040e_s112" decimalNodes="" octalNodes="" unsignedNodes=""/>
@@ -54,9 +59,22 @@
   <Watches active="0" update="Never"/>
  </Watch4>
  <Files>
-  <SessionOpenFile windowGroup="DockEditLeft" x="0" y="863" useTextEdit="1" useBinaryEdit="0" left="0" path="../../../main.c" selected="1" top="731" codecName="Default"/>
+  <SessionOpenFile windowGroup="DockEditLeft" x="0" y="1233" useTextEdit="1" useBinaryEdit="0" left="0" path="../../../main.c" selected="1" top="1183" codecName="Default"/>
   <SessionOpenFile windowGroup="DockEditLeft" x="0" y="100" useTextEdit="1" useBinaryEdit="0" left="0" path="../../../../../../components/ble/ble_advertising/ble_advertising.h" selected="0" top="89" codecName="Default"/>
-  <SessionOpenFile windowGroup="DockEditRight" x="0" y="6301" useTextEdit="1" useBinaryEdit="0" left="19" path="../config/sdk_config.h" selected="0" top="117" codecName="Default"/>
+  <SessionOpenFile windowGroup="DockEditLeft" x="2" y="175" useTextEdit="1" useBinaryEdit="0" left="0" path="../../../../../../components/ble/ble_services/ble_nus/ble_nus.h" selected="0" top="165" codecName="Default"/>
+  <SessionOpenFile windowGroup="DockEditLeft" x="28" y="140" useTextEdit="1" useBinaryEdit="0" left="0" path="../config/sdk_config.h" selected="0" top="100" codecName="Default"/>
+  <SessionOpenFile windowGroup="DockEditLeft" x="0" y="99" useTextEdit="1" useBinaryEdit="0" left="0" path="../../../../../../components/libraries/util/app_error_weak.c" selected="0" top="85" codecName="Default"/>
+  <SessionOpenFile windowGroup="DockEditLeft" x="0" y="0" useTextEdit="1" useBinaryEdit="0" left="0" path="../../../../../../components/ble/peer_manager/peer_data_storage.c" selected="0" top="9" codecName="Default"/>
+  <SessionOpenFile windowGroup="DockEditLeft" x="0" y="474" useTextEdit="1" useBinaryEdit="0" left="0" path="../../../../../../components/ble/peer_manager/peer_manager_handler.c" selected="0" top="326" codecName="Default"/>
+  <SessionOpenFile windowGroup="DockEditLeft" x="134" y="207" useTextEdit="1" useBinaryEdit="0" left="33" path="../../../../../../components/ble/peer_manager/peer_manager_types.h" selected="0" top="201" codecName="Default"/>
+  <SessionOpenFile windowGroup="DockEditLeft" x="25" y="399" useTextEdit="1" useBinaryEdit="0" left="0" path="../../../../../../components/ble/peer_manager/peer_manager.c" selected="0" top="372" codecName="Default"/>
+  <SessionOpenFile windowGroup="DockEditLeft" x="0" y="1029" useTextEdit="1" useBinaryEdit="0" left="0" path="../../../../../../components/ble/peer_manager/security_dispatcher.c" selected="0" top="979" codecName="Default"/>
+  <SessionOpenFile windowGroup="DockEditLeft" x="0" y="0" useTextEdit="1" useBinaryEdit="0" left="0" path="../../../../../../components/ble/peer_manager/auth_status_tracker.c" selected="0" top="13" codecName="Default"/>
+  <SessionOpenFile windowGroup="DockEditLeft" x="0" y="72" useTextEdit="1" useBinaryEdit="0" left="0" path="../../../../../../components/libraries/util/app_error.c" selected="0" top="58" codecName="Default"/>
+  <SessionOpenFile windowGroup="DockEditLeft" x="32" y="286" useTextEdit="1" useBinaryEdit="0" left="0" path="../../../../../../components/softdevice/s112/headers/ble_gap.h" selected="0" top="261" codecName="Default"/>
+  <SessionOpenFile windowGroup="DockEditLeft" x="0" y="97" useTextEdit="1" useBinaryEdit="0" left="0" path="../../../../../../integration/nrfx/legacy/nrf_drv_timer.h" selected="0" top="70" codecName="Default"/>
+  <SessionOpenFile windowGroup="DockEditLeft" x="0" y="149" useTextEdit="1" useBinaryEdit="0" left="0" path="../../../../../../components/ble/common/ble_advdata.h" selected="0" top="124" codecName="Default"/>
+  <SessionOpenFile windowGroup="DockEditLeft" x="0" y="740" useTextEdit="1" useBinaryEdit="0" left="0" path="../../../../../../components/ble/ble_advertising/ble_advertising.c" selected="0" top="730" codecName="Default"/>
  </Files>
- <ARMCrossStudioWindow activeProject="ble_app_uart_pca10040e_s112" fileDialogDefaultFilter="*.c" autoConnectTarget="J-Link" buildConfiguration="Release" sessionSettings="" debugSearchFileMap="/home/noah/programming/firmware/nRF5_SDK_15.2.0_9412b96/modules/nrfx/drivers/src/nrfx_clock.c&#xa;/home/noah/programming/firmware/nRF5_SDK_15.2.0_9412b96_STABLE/modules/nrfx/drivers/src/nrfx_clock.c&#xa;/home/noah/programming/firmware/nRF5_SDK_15.2.0_9412b96_STABLE/examples/ble_peripheral/LURA_TEST_APP/main.c&#xa;/home/noah/programming/firmware/nRF5_SDK_15.2.0_9412b96_STABLE/examples/ble_peripheral/LURA_TEST_APP_DEV/main.c" fileDialogInitialDirectory="/home/noah/programming/firmware/nRF5_SDK_15.2.0_9412b96_STABLE/examples/ble_peripheral/LURA_TEST_APP_DEV" debugSearchPath="" autoConnectCapabilities="3711"/>
+ <ARMCrossStudioWindow activeProject="ble_app_uart_pca10040e_s112" fileDialogDefaultFilter="*.c" autoConnectTarget="J-Link" buildConfiguration="Release" sessionSettings="" debugSearchFileMap="/home/noah/programming/firmware/nRF5_SDK_15.2.0_9412b96/modules/nrfx/drivers/src/nrfx_clock.c&#xa;/home/noah/programming/firmware/nRF5_SDK_15.2.0_9412b96_STABLE/modules/nrfx/drivers/src/nrfx_clock.c&#xa;/home/noah/programming/firmware/nRF5_SDK_15.2.0_9412b96_STABLE/examples/ble_peripheral/LURA_TEST_APP/main.c&#xa;/home/noah/programming/firmware/nRF5_SDK_15.2.0_9412b96_STABLE/examples/ble_peripheral/LURA_TEST_APP_DEV/main.c" fileDialogInitialDirectory="/home/noah/programming/firmware/nRF5_SDK_15.2.0_9412b96_STABLE/components/libraries/fstorage" debugSearchPath="" autoConnectCapabilities="3711"/>
 </session>

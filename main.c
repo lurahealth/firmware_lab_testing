@@ -92,6 +92,14 @@
 #include "nrf_log_ctrl.h"
 #include "nrf_log_default_backends.h"
 
+// Included for peer manager
+#include "nrf_fstorage.h"
+#include "nrf_fstorage_sd.h"
+#include "fds.h"
+#include "peer_manager.h"
+#include "peer_manager_handler.h"
+#include "ble_conn_state.h"
+
 #if defined (UART_PRESENT)
 #include "nrf_uart.h"
 #endif
@@ -103,7 +111,7 @@
 
 #define APP_BLE_CONN_CFG_TAG            1                                           /**< A tag identifying the SoftDevice BLE configuration. */
 
-#define DEVICE_NAME                     "Lura_Health"                            /**< Name of device. Will be included in the advertising data. */
+#define DEVICE_NAME                     "Lura_Health"                               /**< Name of device. Will be included in the advertising data. */
 #define NUS_SERVICE_UUID_TYPE           BLE_UUID_TYPE_VENDOR_BEGIN                  /**< UUID type for the Nordic UART Service (vendor specific). */
 
 #define APP_BLE_OBSERVER_PRIO           3                                           /**< Application's BLE observer priority. You shouldn't need to modify this value. */
@@ -113,7 +121,7 @@
 #define APP_ADV_DURATION                18000                                       /**< The advertising duration (180 seconds) in units of 10 milliseconds. */
 
 #define MIN_CONN_INTERVAL               MSEC_TO_UNITS(20, UNIT_1_25_MS)             /**< Minimum acceptable connection interval (20 ms), Connection interval uses 1.25 ms units. */
-#define MAX_CONN_INTERVAL               MSEC_TO_UNITS(75, UNIT_1_25_MS)             /**< Maximum acceptable connection interval (75 ms), Connection interval uses 1.25 ms units. */
+#define MAX_CONN_INTERVAL               MSEC_TO_UNITS(200, UNIT_1_25_MS)             /**< Maximum acceptable connection interval (200 ms), Connection interval uses 1.25 ms units. */
 #define SLAVE_LATENCY                   0                                           /**< Slave latency. */
 #define CONN_SUP_TIMEOUT                MSEC_TO_UNITS(4000, UNIT_10_MS)             /**< Connection supervisory timeout (4 seconds), Supervision Timeout uses 10 ms units. */
 #define FIRST_CONN_PARAMS_UPDATE_DELAY  APP_TIMER_TICKS(5000)                       /**< Time from initiating event (connect or start of notification) to first time sd_ble_gap_conn_param_update is called (5 seconds). */
@@ -124,6 +132,15 @@
 
 #define UART_TX_BUF_SIZE                256                                         /**< UART TX buffer size. */
 #define UART_RX_BUF_SIZE                256                                         /**< UART RX buffer size. */
+
+#define SEC_PARAM_BOND                  1                                           /**< Perform bonding. */
+#define SEC_PARAM_MITM                  0                                           /**< Man In The Middle protection not required. */
+#define SEC_PARAM_LESC                  0                                           /**< LE Secure Connections not enabled. */
+#define SEC_PARAM_KEYPRESS              0                                           /**< Keypress notifications not enabled. */
+#define SEC_PARAM_IO_CAPABILITIES       BLE_GAP_IO_CAPS_NONE                        /**< No I/O capabilities. */
+#define SEC_PARAM_OOB                   0                                           /**< Out Of Band data not available. */
+#define SEC_PARAM_MIN_KEY_SIZE          7                                           /**< Minimum encryption key size. */
+#define SEC_PARAM_MAX_KEY_SIZE          16                                          /**< Maximum encryption key size. */
 
 #define SAMPLES_IN_BUFFER               11                                          /**< SAADC buffer > */
 
@@ -160,7 +177,7 @@ static ble_uuid_t m_adv_uuids[]          =                                      
 };
 
 
-/* UCHU nRF52810 port assignments */
+/* Lura Health nRF52810 port assignments */
 #define ENABLE_ANALOG_PIN 4
 
 /* GLOBALS */
@@ -185,6 +202,7 @@ static inline void disable_pH_voltage_reading (void);
 static inline void saadc_init                 (void);
 static inline void enable_analog_pin          (void);
 static inline void disable_analog_pin         (void);
+static        void advertising_start          (bool erase_bonds);
 
 
 /**@brief Function for assert macro callback.
@@ -204,14 +222,59 @@ void assert_nrf_callback(uint16_t line_num, const uint8_t * p_file_name)
     app_error_handler(DEAD_BEEF, line_num, p_file_name);
 }
 
+
+/**@brief Function for handling Peer Manager events.
+ *
+ * @param[in] p_evt  Peer Manager event.
+ */
+static void pm_evt_handler(pm_evt_t const * p_evt)
+{
+    NRF_LOG_INFO("ENTERED PM_EVT_HANDLER");
+    NRF_LOG_FLUSH();
+    pm_handler_on_pm_evt(p_evt);
+    pm_handler_flash_clean(p_evt);
+
+    switch (p_evt->evt_id)
+    {
+        case PM_EVT_CONN_SEC_SUCCEEDED:
+            NRF_LOG_INFO("PM_EVT_CONN_SEC_SUCCEEDED");
+            NRF_LOG_FLUSH();
+            break;
+
+        case PM_EVT_PEERS_DELETE_SUCCEEDED:
+            NRF_LOG_INFO("PM_EVT_CONN_SEC_SUCCEEDED");
+            NRF_LOG_FLUSH();            
+            advertising_start(false);
+            break;
+
+        case PM_EVT_BONDED_PEER_CONNECTED:  
+            NRF_LOG_INFO("PM_EVT_BONDED_PEER_CONNECTED");
+            NRF_LOG_FLUSH();
+            break;
+
+        case PM_EVT_CONN_SEC_CONFIG_REQ:
+        {
+            // Allow pairing request from an already bonded peer.
+            NRF_LOG_INFO("PM_EVT_CONN_SEC_CONFIG_REQ");
+            NRF_LOG_FLUSH();
+            pm_conn_sec_config_t conn_sec_config = {.allow_repairing = true};
+            pm_conn_sec_config_reply(p_evt->conn_handle, &conn_sec_config);
+        } break;
+
+        default:
+            break;
+    }
+}
+
+
+
 /**@brief Function for initializing the timer module.
  */
-ret_code_t TIMER_err_code;
-
 static inline void timers_init(void)
 {
-    TIMER_err_code = app_timer_init();
-    APP_ERROR_CHECK(TIMER_err_code);
+    uint32_t err_code;
+    err_code = app_timer_init();
+    APP_ERROR_CHECK(err_code);
 }
 
 
@@ -230,7 +293,7 @@ static inline void gap_params_init(void)
     BLE_GAP_CONN_SEC_MODE_SET_OPEN(&sec_mode);
 
     err_code = sd_ble_gap_device_name_set(&sec_mode,
-                                         (const uint8_t *) DEVICE_NAME,
+                                         (const uint8_t *)DEVICE_NAME,
                                           strlen(DEVICE_NAME));
     APP_ERROR_CHECK(err_code);
 
@@ -309,13 +372,13 @@ static void services_init(void)
     ble_nus_init_t     nus_init;
     nrf_ble_qwr_init_t qwr_init = {0};
 
-    // Initialize Queued Write Module.
+    // Initialize Queued Write Module
     qwr_init.error_handler = nrf_qwr_error_handler;
 
     err_code = nrf_ble_qwr_init(&m_qwr, &qwr_init);
     APP_ERROR_CHECK(err_code);
 
-    // Initialize NUS.
+    // Initialize NUS
     memset(&nus_init, 0, sizeof(nus_init));
 
     nus_init.data_handler = nus_data_handler;
@@ -342,10 +405,8 @@ static void on_conn_params_evt(ble_conn_params_evt_t * p_evt)
 
     if (p_evt->evt_type == BLE_CONN_PARAMS_EVT_FAILED)
     {
-        NRF_LOG_INFO("DISCONNECTING BOOIII");
-        nrf_delay_ms(3000);
         err_code = sd_ble_gap_disconnect(m_conn_handle, 
-                                        BLE_HCI_CONN_INTERVAL_UNACCEPTABLE);
+                                         BLE_HCI_CONN_INTERVAL_UNACCEPTABLE);
         APP_ERROR_CHECK(err_code);
     }
 }
@@ -393,7 +454,7 @@ static void sleep_mode_enter(void)
     uint32_t err_code; 
 
     // Go to system-off mode (function will not return; wakeup causes reset).
-    err_code = sd_power_system_off();
+    //err_code = sd_power_system_off();
     APP_ERROR_CHECK(err_code);
 }
 
@@ -453,7 +514,7 @@ static void ble_evt_handler(ble_evt_t const * p_ble_evt, void * p_context)
             // LED indication will be changed when advertising starts.
             m_conn_handle = BLE_CONN_HANDLE_INVALID;
             CONNECTION_MADE = false;
-            NRF_LOG_INFO("DISCONNECTED...\n");
+            NRF_LOG_INFO("DISCONNECTED\n");
             break;
 
         case BLE_GAP_EVT_PHY_UPDATE_REQUEST:
@@ -468,21 +529,6 @@ static void ble_evt_handler(ble_evt_t const * p_ble_evt, void * p_context)
                                                                          &phys);
             APP_ERROR_CHECK(err_code);
         } break;
-
-        case BLE_GAP_EVT_SEC_PARAMS_REQUEST:
-            // Pairing not supported
-            err_code = 
-                sd_ble_gap_sec_params_reply(m_conn_handle, 
-                                            BLE_GAP_SEC_STATUS_PAIRING_NOT_SUPP, 
-                                            NULL, NULL);
-            APP_ERROR_CHECK(err_code);
-            break;
-
-        case BLE_GATTS_EVT_SYS_ATTR_MISSING:
-            // No system attributes have been stored.
-            err_code = sd_ble_gatts_sys_attr_set(m_conn_handle, NULL, 0, 0);
-            APP_ERROR_CHECK(err_code);
-            break;
 
         case BLE_GATTC_EVT_TIMEOUT:
             // Disconnect on GATT Client timeout event.
@@ -500,6 +546,19 @@ static void ble_evt_handler(ble_evt_t const * p_ble_evt, void * p_context)
                                       BLE_HCI_REMOTE_USER_TERMINATED_CONNECTION);
             CONNECTION_MADE = false;
             APP_ERROR_CHECK(err_code);
+            break;
+
+         case BLE_GAP_EVT_AUTH_STATUS:
+             NRF_LOG_INFO("BLE_GAP_EVT_AUTH_STATUS: status=0x%x bond=0x%x lv4: %d kdist_own:0x%x kdist_peer:0x%x",
+                          p_ble_evt->evt.gap_evt.params.auth_status.auth_status,
+                          p_ble_evt->evt.gap_evt.params.auth_status.bonded,
+                          p_ble_evt->evt.gap_evt.params.auth_status.sm1_levels.lv4,
+                          *((uint8_t *)&p_ble_evt->evt.gap_evt.params.auth_status.kdist_own),
+                          *((uint8_t *)&p_ble_evt->evt.gap_evt.params.auth_status.kdist_peer));
+            break;
+
+        case BLE_GAP_EVT_SEC_PARAMS_REQUEST:
+            NRF_LOG_INFO("BLE_GAP_EVT_SEC_PARAMS_REQUEST");
             break;
 
         default:
@@ -536,121 +595,50 @@ static void ble_stack_init(void)
 }
 
 
-/**@brief   Function for handling app_uart events.
- *
- * @details This function will receive a single character from the app_uart 
- *          module and append it to a string. The string will be be sent over 
- *          BLE when the last character received was a 'new line' '\n' 
- *          (hex 0x0A) or if the string has reached the maximum data length.
+/**@brief Function for the Peer Manager initialization.
  */
-/**@snippet [Handling the data received over UART] */
-static inline void uart_event_handle(app_uart_evt_t * p_event)
+static void peer_manager_init(void)
 {
-    static uint8_t data_array[BLE_NUS_MAX_DATA_LEN];
-    static uint8_t index = 0;
-    uint32_t       err_code;
+    ble_gap_sec_params_t sec_param;
+    ret_code_t           err_code;
 
-    switch (p_event->evt_type)
-    {
-        case APP_UART_DATA_READY:
-            UNUSED_VARIABLE(app_uart_get(&data_array[index]));
-            index++;
+    err_code = pm_init();
+    APP_ERROR_CHECK(err_code);
 
-            if ((data_array[index - 1] == '\n') ||
-                (data_array[index - 1] == '\r') ||
-                (index >= m_ble_nus_max_data_len))
-            {
-                if (index > 1)
-                {
-                    NRF_LOG_DEBUG("Ready to send data over BLE NUS");
-                    NRF_LOG_HEXDUMP_DEBUG(data_array, index);
+    memset(&sec_param, 0, sizeof(ble_gap_sec_params_t));
 
-                    do
-                    {
-                        uint16_t length = (uint16_t)index;
-                        err_code = ble_nus_data_send(&m_nus, data_array, 
-                                                     &length, m_conn_handle);
-                        if ((err_code != NRF_ERROR_INVALID_STATE) &&
-                            (err_code != NRF_ERROR_RESOURCES) &&
-                            (err_code != NRF_ERROR_NOT_FOUND))
-                        {
-                            APP_ERROR_CHECK(err_code);
-                        }
-                    } while (err_code == NRF_ERROR_RESOURCES);
-                }
+    // Security parameters to be used for all security procedures.
+    sec_param.bond           = SEC_PARAM_BOND;
+    sec_param.mitm           = SEC_PARAM_MITM;
+    sec_param.lesc           = SEC_PARAM_LESC;
+    sec_param.keypress       = SEC_PARAM_KEYPRESS;
+    sec_param.io_caps        = SEC_PARAM_IO_CAPABILITIES;
+    sec_param.oob            = SEC_PARAM_OOB;
+    sec_param.min_key_size   = SEC_PARAM_MIN_KEY_SIZE;
+    sec_param.max_key_size   = SEC_PARAM_MAX_KEY_SIZE;
+    sec_param.kdist_own.enc  = 1;
+    sec_param.kdist_own.id   = 1;
+    sec_param.kdist_peer.enc = 1;
+    sec_param.kdist_peer.id  = 1;
 
-                index = 0;
-            }
-            break;
+    err_code = pm_sec_params_set(&sec_param);
+    APP_ERROR_CHECK(err_code);
 
-        case APP_UART_COMMUNICATION_ERROR:
-            //APP_ERROR_HANDLER(p_event->data.error_communication);
-            break;
-
-        case APP_UART_FIFO_ERROR:
-            //APP_ERROR_HANDLER(p_event->data.error_code);
-            break;
-
-        default:
-            break;
-    }
-}
-/**@snippet [Handling the data received over UART] */
-
-
-/**@brief  Function for initializing the UART module.
- */
-/**@snippet [UART Initialization] */
-static void uart_init(void)
-{
-    uint32_t                     err_code;
-    app_uart_comm_params_t const comm_params =
-    {
-        .rx_pin_no    = 11,
-        .tx_pin_no    = TX_PIN_NUMBER,
-        .rts_pin_no   = 12,
-        .cts_pin_no   = CTS_PIN_NUMBER,
-        .flow_control = APP_UART_FLOW_CONTROL_DISABLED,
-        .use_parity   = false,
-#if defined (UART_PRESENT)
-        .baud_rate    = NRF_UART_BAUDRATE_115200
-#else
-        .baud_rate    = NRF_UARTE_BAUDRATE_115200
-#endif
-    };
-
-    APP_UART_FIFO_INIT(&comm_params,
-                       UART_RX_BUF_SIZE,
-                       UART_TX_BUF_SIZE,
-                       uart_event_handle,
-                       APP_IRQ_PRIORITY_LOWEST,
-                       err_code);
+    err_code = pm_register(pm_evt_handler);
     APP_ERROR_CHECK(err_code);
 }
-/**@snippet [UART Initialization] */
 
 
-static inline void START_SIGNAL(void)
+/**@brief Clear bond information from persistent storage.
+ */
+static void delete_bonds(void)
 {
-    nrf_drv_gpiote_out_config_t config = NRFX_GPIOTE_CONFIG_OUT_SIMPLE(false);
-    if(nrf_drv_gpiote_is_init() == false) {
-          nrf_drv_gpiote_init();
-    }
-    nrf_drv_gpiote_out_init(11, &config);
-    nrf_drv_gpiote_out_set(11);  
-    nrfx_gpiote_uninit();  
-}
+    ret_code_t err_code;
 
+    NRF_LOG_INFO("Erase bonds!");
 
-static inline void DONE_SIGNAL(void)
-{
-    nrf_drv_gpiote_out_config_t config = NRFX_GPIOTE_CONFIG_OUT_SIMPLE(false);
-    if(nrf_drv_gpiote_is_init() == false) {
-          nrf_drv_gpiote_init();
-    }
-    nrf_drv_gpiote_out_init(12, &config);
-    nrf_drv_gpiote_out_set(12);  
-    nrfx_gpiote_uninit();  
+    err_code = pm_peers_delete();
+    APP_ERROR_CHECK(err_code);
 }
 
 
@@ -665,7 +653,7 @@ static void advertising_init(void)
 
     init.advdata.name_type          = BLE_ADVDATA_FULL_NAME;
     init.advdata.include_appearance = false;
-    init.advdata.flags              = BLE_GAP_ADV_FLAGS_LE_ONLY_LIMITED_DISC_MODE;
+    init.advdata.flags               = BLE_GAP_ADV_FLAGS_LE_ONLY_LIMITED_DISC_MODE;
 
     init.srdata.uuids_complete.uuid_cnt = sizeof(m_adv_uuids) / sizeof(m_adv_uuids[0]);
     init.srdata.uuids_complete.p_uuids  = m_adv_uuids;
@@ -717,10 +705,19 @@ static void idle_state_handle(void)
 
 /**@brief Function for starting advertising.
  */
-static void advertising_start(void)
+static void advertising_start(bool erase_bonds)
 {
-    uint32_t err_code = ble_advertising_start(&m_advertising, BLE_ADV_MODE_FAST);
-    APP_ERROR_CHECK(err_code);
+    if (erase_bonds == true)
+    {
+        delete_bonds();
+        // Advertising is started by PM_EVT_PEERS_DELETED_SUCEEDED event
+    }
+    else
+    {
+        ret_code_t err_code = ble_advertising_start(&m_advertising, BLE_ADV_MODE_FAST);
+
+        APP_ERROR_CHECK(err_code);
+    }
 }
 
 
@@ -736,8 +733,8 @@ static inline void enable_analog_circuit(void)
     nrf_drv_gpiote_out_set(ENABLE_ANALOG_PIN);
 }
 
-
-
+/* This function sets enable pin for ISFET circuitry to LOW
+ */
 static inline void disable_analog_pin(void)
 {
      // Redundant, but follows design
@@ -1232,8 +1229,9 @@ void gatt_init(void)
  */
 int main(void)
 {
+    bool erase_bonds = false;
+
     log_init();
-    uart_init();
     timers_init();
     power_management_init();
     ble_stack_init();
@@ -1242,9 +1240,8 @@ int main(void)
     services_init();
     advertising_init();
     conn_params_init();
-    // Initial pin states is low
-    disable_analog_pin();
-    advertising_start();
+    peer_manager_init();
+    advertising_start(erase_bonds);
     // Enter main loop.
     while (true)
     {
