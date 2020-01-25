@@ -500,7 +500,7 @@ static void ble_evt_handler(ble_evt_t const * p_ble_evt, void * p_context)
             APP_ERROR_CHECK(err_code);
             CONNECTION_MADE = true;
 
-            NRF_LOG_INFO("CONNECTION MADE \n");
+            NRF_LOG_INFO("CONNECTION MADE (ble_gap_evt) \n");
 
             break;
 
@@ -815,8 +815,6 @@ void create_bluetooth_packet(uint32_t ph_val,
     uint32_t temp = 0;                  // hold intermediate divisions of variables
     uint32_t ASCII_DIG_BASE = 48;
 
-    NRF_LOG_INFO("arr[i] = %u\n", total_packet[0]);
-
     // Pack ph_val into appropriate location
     temp = ph_val;
     for(int i = 3; i >= 0; i--){
@@ -824,7 +822,6 @@ void create_bluetooth_packet(uint32_t ph_val,
         else {
             temp = temp / 10;
             total_packet[i] = (uint8_t)(temp % 10 + ASCII_DIG_BASE);
-            NRF_LOG_INFO("total_packet[%d]: %u", total_packet[i]);
         }
     }
 
@@ -835,7 +832,6 @@ void create_bluetooth_packet(uint32_t ph_val,
         else {
             temp = temp / 10;
             total_packet[i] = (uint8_t)(temp % 10 + ASCII_DIG_BASE);
-            NRF_LOG_INFO("total_packet[%d]: %u", total_packet[i]);
         }
     }
 
@@ -847,7 +843,6 @@ void create_bluetooth_packet(uint32_t ph_val,
         else {
             temp = temp / 10;
             total_packet[i] = (uint8_t)(temp % 10 + ASCII_DIG_BASE);
-            NRF_LOG_INFO("total_packet[%d]: %u", total_packet[i]);
         }
     }
 }
@@ -927,7 +922,7 @@ static inline void saadc_callback(nrf_drv_saadc_evt_t const * p_event)
             // Send data
             err_code = ble_nus_data_send(&m_nus, total_packet, 
                                          &total_size, m_conn_handle);
-            //APP_ERROR_CHECK(err_code);
+            APP_ERROR_CHECK(err_code);
             // reset global control boolean
             PH_IS_READ = false;
             BATTERY_IS_READ = false;
@@ -1101,7 +1096,7 @@ int main(void)
     services_init();
     advertising_init();
     conn_params_init();
-    //peer_manager_init();
+    peer_manager_init();
     advertising_start(erase_bonds);
     // Enter main loop.
     while (true)

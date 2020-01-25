@@ -119,7 +119,11 @@
       <file file_name="../../../../../../components/ble/peer_manager/peer_manager_handler.c" />
       <file file_name="../../../../../../components/ble/peer_manager/pm_buffer.c" />
       <file file_name="../../../../../../components/ble/peer_manager/security_dispatcher.c" />
-      <file file_name="../../../../../../components/ble/peer_manager/security_manager.c" />
+      <file file_name="../../../../../../components/ble/peer_manager/security_manager.c">
+        <configuration
+          Name="Release"
+          gcc_optimization_level="Optimize For Size" />
+      </file>
     </folder>
     <folder Name="UTF8/UTF16 converter">
       <file file_name="../../../../../../external/utf_converter/utf.c" />
@@ -139,7 +143,7 @@
     <configuration
       Name="Release"
       c_user_include_directories=".\;../../../../../../components/libraries/fds\;../../../../../../components/libraries/fstorage\;../../../../../../components/libraries/experimental_section_vars\;../../../../../../components/ble/peer_manager/"
-      gcc_optimization_level="None" />
+      gcc_optimization_level="Optimize For Size" />
   </project>
   <configuration
     Name="Release"
