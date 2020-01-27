@@ -71,7 +71,6 @@
 #include "nrf_drv_timer.h"
 
 #include "nrfx_ppi.h"
-#include "nrfx_pwm.h"
 #include "nrf_timer.h"
 #include "nrfx_saadc.h"
 
@@ -111,7 +110,7 @@
 
 #define APP_BLE_CONN_CFG_TAG            1                                           /**< A tag identifying the SoftDevice BLE configuration. */
 
-#define DEVICE_NAME                     "Lura_Health"                               /**< Name of device. Will be included in the advertising data. */
+#define DEVICE_NAME                     "Lura_Health_Rakshak"                               /**< Name of device. Will be included in the advertising data. */
 #define NUS_SERVICE_UUID_TYPE           BLE_UUID_TYPE_VENDOR_BEGIN                  /**< UUID type for the Nordic UART Service (vendor specific). */
 
 #define APP_BLE_OBSERVER_PRIO           3                                           /**< Application's BLE observer priority. You shouldn't need to modify this value. */
@@ -515,6 +514,17 @@ static void ble_evt_handler(ble_evt_t const * p_ble_evt, void * p_context)
             m_conn_handle = BLE_CONN_HANDLE_INVALID;
             CONNECTION_MADE = false;
             NRF_LOG_INFO("DISCONNECTED\n");
+            NRF_LOG_FLUSH();
+
+            err_code = app_timer_stop(m_timer_id);
+            APP_ERROR_CHECK(err_code);
+            nrfx_timer_uninit(&m_timer);
+            nrfx_ppi_channel_free(m_ppi_channel);
+            nrfx_saadc_uninit();
+
+            // *** DISABLE ENABLE ***
+            disable_analog_pin();
+
             break;
 
         case BLE_GAP_EVT_PHY_UPDATE_REQUEST:
@@ -922,7 +932,7 @@ static inline void saadc_callback(nrf_drv_saadc_evt_t const * p_event)
             // Send data
             err_code = ble_nus_data_send(&m_nus, total_packet, 
                                          &total_size, m_conn_handle);
-            APP_ERROR_CHECK(err_code);
+            //APP_ERROR_CHECK(err_code);
             // reset global control boolean
             PH_IS_READ = false;
             BATTERY_IS_READ = false;
@@ -1028,6 +1038,7 @@ static inline void single_shot_timer_handler()
     // disable timer
     ret_code_t err_code;
     err_code = app_timer_stop(m_timer_id);
+    APP_ERROR_CHECK(err_code);
 
     // Delay to ensure appropriate timing between
     enable_analog_circuit();       

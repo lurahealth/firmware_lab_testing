@@ -95,8 +95,6 @@ Output/ble_app_uart_pca10040e_s112\ Release/Obj/main.o: \
  ../../../../../../integration/nrfx/legacy/nrf_drv_timer.h \
  ../../../../../../modules/nrfx/drivers/include/nrfx_timer.h \
  ../../../../../../modules/nrfx/hal/nrf_timer.h \
- ../../../../../../modules/nrfx/drivers/include/nrfx_pwm.h \
- ../../../../../../modules/nrfx/hal/nrf_pwm.h \
  ../../../../../../modules/nrfx/hal/nrf_timer.h \
  ../../../../../../components/ble/ble_services/ble_nus/ble_nus.h \
  ../../../../../../components/ble/ble_link_ctx_manager/ble_link_ctx_manager.h \
