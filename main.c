@@ -110,7 +110,7 @@
 
 #define APP_BLE_CONN_CFG_TAG            1                                           /**< A tag identifying the SoftDevice BLE configuration. */
 
-#define DEVICE_NAME                     "Lura_Health_Rakshak"                               /**< Name of device. Will be included in the advertising data. */
+#define DEVICE_NAME                     "Lura_Health_Testing"                       /**< Name of device. Will be included in the advertising data. */
 #define NUS_SERVICE_UUID_TYPE           BLE_UUID_TYPE_VENDOR_BEGIN                  /**< UUID type for the Nordic UART Service (vendor specific). */
 
 #define APP_BLE_OBSERVER_PRIO           3                                           /**< Application's BLE observer priority. You shouldn't need to modify this value. */
@@ -177,16 +177,16 @@ static ble_uuid_t m_adv_uuids[]          =                                      
 
 
 /* Lura Health nRF52810 port assignments */
-#define ENABLE_ANALOG_PIN 4
+#define ENABLE_ISFET_PIN 8
 
 /* GLOBALS */
 uint32_t AVG_PH_VAL        = 0;
 uint32_t AVG_BATT_VAL      = 0;
 uint32_t AVG_TEMP_VAL      = 0;
-bool      PH_IS_READ       = false;
-bool      BATTERY_IS_READ  = false;
-bool      SAADC_CALIBRATED = false;
-bool      CONNECTION_MADE  = false;
+bool     PH_IS_READ        = false;
+bool     BATTERY_IS_READ   = false;
+bool     SAADC_CALIBRATED  = false;
+bool     CONNECTION_MADE    = false;
 
 static const nrf_drv_timer_t   m_timer = NRF_DRV_TIMER_INSTANCE(1);
 static       nrf_saadc_value_t m_buffer_pool[1][SAMPLES_IN_BUFFER];
@@ -199,8 +199,8 @@ static inline void enable_switch              (void);
 static inline void check_reed_switch          (void);
 static inline void disable_pH_voltage_reading (void);
 static inline void saadc_init                 (void);
-static inline void enable_analog_pin          (void);
-static inline void disable_analog_pin         (void);
+static inline void enable_isfet_circuitry     (void);
+static inline void disable_isfet_circuit    (void);
 static        void advertising_start          (bool erase_bonds);
 
 
@@ -523,7 +523,7 @@ static void ble_evt_handler(ble_evt_t const * p_ble_evt, void * p_context)
             nrfx_saadc_uninit();
 
             // *** DISABLE ENABLE ***
-            disable_analog_pin();
+            disable_isfet_circuit();
 
             break;
 
@@ -733,19 +733,19 @@ static void advertising_start(bool erase_bonds)
 
 /* This function sets enable pin for ISFET circuitry to HIGH
  */
-static inline void enable_analog_circuit(void)
+static inline void enable_isfet_circuit(void)
 {
     nrf_drv_gpiote_out_config_t config = NRFX_GPIOTE_CONFIG_OUT_SIMPLE(false);
     if(nrf_drv_gpiote_is_init() == false) {
           nrf_drv_gpiote_init();
     }
-    nrf_drv_gpiote_out_init(ENABLE_ANALOG_PIN, &config);
-    nrf_drv_gpiote_out_set(ENABLE_ANALOG_PIN);
+    nrf_drv_gpiote_out_init(ENABLE_ISFET_PIN, &config);
+    nrf_drv_gpiote_out_set(ENABLE_ISFET_PIN);
 }
 
 /* This function sets enable pin for ISFET circuitry to LOW
  */
-static inline void disable_analog_pin(void)
+static inline void disable_isfet_circuit(void)
 {
      // Redundant, but follows design
      nrfx_gpiote_uninit();
@@ -1021,7 +1021,7 @@ static inline void disable_pH_voltage_reading(void)
     nrfx_saadc_uninit();
 
     // *** DISABLE ENABLE ***
-    disable_analog_pin();
+    disable_isfet_circuit();
 
     // Restart timer
     ret_code_t err_code;
@@ -1041,7 +1041,7 @@ static inline void single_shot_timer_handler()
     APP_ERROR_CHECK(err_code);
 
     // Delay to ensure appropriate timing between
-    enable_analog_circuit();       
+    enable_isfet_circuit();       
     // PWM output, ISFET capacitor, etc
     nrf_delay_us(2000);              
     // Begin SAADC initialization/start
@@ -1114,6 +1114,20 @@ int main(void)
     {
         idle_state_handle();
     } 
+
+//    while (true)
+//    {
+//      enable_isfet_circuit();
+//      nrf_delay_ms(2000);
+//      disable_isfet_circuit();
+//      nrf_delay_ms(2000);
+//    }
+
+//    while (true)
+//    {
+//      enable_isfet_circuit();
+//      nrf_delay_ms(10000);
+//    }
 }
 
 /*
