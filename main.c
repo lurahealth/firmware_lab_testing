@@ -859,11 +859,12 @@ void create_bluetooth_packet(uint32_t ph_val,
 
 static inline uint32_t saadc_result_to_mv(uint32_t saadc_result)
 {
-    float saadc_denom   = 4095.0;
-    float saadc_vref_mv = 3000.0;
-    float saadc_res_in_mv = ((float)saadc_result/saadc_denom) * saadc_vref_mv;
+    float adc_denom     = 4096.0;
+    float adc_ref_mv = 600.0;
+    float adc_prescale    = 5.0;
+    float adc_res_in_mv = (((float)saadc_result*adc_ref_mv)/adc_denom) * adc_prescale;
 
-    return (uint32_t)saadc_res_in_mv;
+    return (uint32_t)adc_res_in_mv;
 }
 
 /**
@@ -900,7 +901,10 @@ static inline void saadc_callback(nrf_drv_saadc_evt_t const * p_event)
             else {
                 avg_saadc_reading += p_event->data.done.p_buffer[i];
             }
+            NRF_LOG_INFO("%d\n", p_event->data.done.p_buffer[i]);
         }
+        NRF_LOG_INFO("\n");
+        NRF_LOG_FLUSH();
         avg_saadc_reading = avg_saadc_reading/(SAMPLES_IN_BUFFER - 1); 
         // If ph has not been read, read it then restart SAADC to read temp
         if (!PH_IS_READ) {
@@ -957,16 +961,16 @@ void saadc_init(void)
     nrf_saadc_input_t ANALOG_INPUT;
     // Change pin depending on global control boolean
     if (!PH_IS_READ) {
-        NRF_LOG_INFO("Setting saadc input to AIN1\n");
-        ANALOG_INPUT = NRF_SAADC_INPUT_AIN1;
+        NRF_LOG_INFO("Setting saadc input to AIN2\n");
+        ANALOG_INPUT = NRF_SAADC_INPUT_AIN2;
     }
     else if (!(PH_IS_READ && BATTERY_IS_READ)) {
         NRF_LOG_INFO("Setting saadc input to AIN3\n");
         ANALOG_INPUT = NRF_SAADC_INPUT_AIN3;
     }
     else {
-        NRF_LOG_INFO("Setting saadc input to AIN0\n");
-        ANALOG_INPUT = NRF_SAADC_INPUT_AIN0;        
+        NRF_LOG_INFO("Setting saadc input to AIN1\n");
+        ANALOG_INPUT = NRF_SAADC_INPUT_AIN1;        
     }
 
     nrf_saadc_channel_config_t channel_config =
@@ -1021,7 +1025,7 @@ static inline void disable_pH_voltage_reading(void)
     nrfx_saadc_uninit();
 
     // *** DISABLE ENABLE ***
-    disable_isfet_circuit();
+    //disable_isfet_circuit();
 
     // Restart timer
     ret_code_t err_code;
@@ -1040,10 +1044,10 @@ static inline void single_shot_timer_handler()
     err_code = app_timer_stop(m_timer_id);
     APP_ERROR_CHECK(err_code);
 
-    // Delay to ensure appropriate timing between
+    // Delay to ensure appropriate timing 
     enable_isfet_circuit();       
     // PWM output, ISFET capacitor, etc
-    nrf_delay_us(2000);              
+    nrf_delay_ms(10);              
     // Begin SAADC initialization/start
     enable_pH_voltage_reading();
 }
@@ -1114,20 +1118,6 @@ int main(void)
     {
         idle_state_handle();
     } 
-
-//    while (true)
-//    {
-//      enable_isfet_circuit();
-//      nrf_delay_ms(2000);
-//      disable_isfet_circuit();
-//      nrf_delay_ms(2000);
-//    }
-
-//    while (true)
-//    {
-//      enable_isfet_circuit();
-//      nrf_delay_ms(10000);
-//    }
 }
 
 /*
