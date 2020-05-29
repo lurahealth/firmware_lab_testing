@@ -52,6 +52,9 @@
 
 #include <stdint.h>
 #include <string.h>
+#include <time.h>
+#include <stdlib.h>
+#include <math.h>
 #include "nordic_common.h"
 #include "boards.h"
 
@@ -110,7 +113,7 @@
 
 #define APP_BLE_CONN_CFG_TAG            1                                           /**< A tag identifying the SoftDevice BLE configuration. */
 
-#define DEVICE_NAME                     "Lura_Health_Testing"                       /**< Name of device. Will be included in the advertising data. */
+#define DEVICE_NAME                     "Lura_Health_EV3_Rework_1"                   /**< Name of device. Will be included in the advertising data. */
 #define NUS_SERVICE_UUID_TYPE           BLE_UUID_TYPE_VENDOR_BEGIN                  /**< UUID type for the Nordic UART Service (vendor specific). */
 
 #define APP_BLE_OBSERVER_PRIO           3                                           /**< Application's BLE observer priority. You shouldn't need to modify this value. */
@@ -141,7 +144,10 @@
 #define SEC_PARAM_MIN_KEY_SIZE          7                                           /**< Minimum encryption key size. */
 #define SEC_PARAM_MAX_KEY_SIZE          16                                          /**< Maximum encryption key size. */
 
-#define SAMPLES_IN_BUFFER               11                                          /**< SAADC buffer > */
+#define SAMPLES_IN_BUFFER               50                                          /**< SAADC buffer > */
+
+#define DATA_INTERVAL                   500
+
 
 #define NRF_SAADC_CUSTOM_CHANNEL_CONFIG_SE(PIN_P) \
 {                                                   \
@@ -178,6 +184,7 @@ static ble_uuid_t m_adv_uuids[]          =                                      
 
 /* Lura Health nRF52810 port assignments */
 #define ENABLE_ISFET_PIN 8
+#define CHIP_POWER_PIN   12
 
 /* GLOBALS */
 uint32_t AVG_PH_VAL        = 0;
@@ -186,7 +193,24 @@ uint32_t AVG_TEMP_VAL      = 0;
 bool     PH_IS_READ        = false;
 bool     BATTERY_IS_READ   = false;
 bool     SAADC_CALIBRATED  = false;
-bool     CONNECTION_MADE    = false;
+bool     CONNECTION_MADE   = false;
+bool     CAL_MODE          = false;
+bool     READ_CAL_DATA     = false;
+bool     PT1_READ          = false;
+bool     PT2_READ          = false;
+bool     PT3_READ          = false;
+bool     CAL_PERFORMED     = false;
+double   PT1_PH_VAL        = 0;
+double   PT1_MV_VAL        = 0;
+double   PT2_PH_VAL        = 0;
+double   PT2_MV_VAL        = 0;
+double   PT3_PH_VAL        = 0;
+double   PT3_MV_VAL        = 0;
+int      NUM_CAL_PTS       = 0;
+double   MVAL_CALIBRATION  = 0;
+double   BVAL_CALIBRATION  = 0;
+double   RVAL_CALIBRATION  = 0;
+
 
 static const nrf_drv_timer_t   m_timer = NRF_DRV_TIMER_INSTANCE(1);
 static       nrf_saadc_value_t m_buffer_pool[1][SAMPLES_IN_BUFFER];
@@ -194,14 +218,21 @@ static       nrf_ppi_channel_t m_ppi_channel;
 
 
 // Forward declarations
-static inline void enable_pH_voltage_reading  (void);
-static inline void enable_switch              (void);
-static inline void check_reed_switch          (void);
-static inline void disable_pH_voltage_reading (void);
-static inline void saadc_init                 (void);
-static inline void enable_isfet_circuitry     (void);
-static inline void disable_isfet_circuit    (void);
-static        void advertising_start          (bool erase_bonds);
+void enable_pH_voltage_reading  (void);
+void enable_switch              (void);
+void check_reed_switch          (void);
+void disable_pH_voltage_reading (void);
+void saadc_init                 (void);
+void enable_isfet_circuit       (void);
+void disable_isfet_circuit      (void);
+void turn_chip_power_on         (void);
+void turn_chip_power_off         (void);
+void restart_saadc              (void);
+void restart_pH_interval_timer  (void);
+void linreg                     (int num, double x[], double y[]);
+void perform_calibration        (uint8_t cal_pts);
+static void advertising_start   (bool erase_bonds);
+uint32_t saadc_result_to_mv     (uint32_t saadc_result);
 
 
 /**@brief Function for assert macro callback.
@@ -221,7 +252,6 @@ void assert_nrf_callback(uint16_t line_num, const uint8_t * p_file_name)
     app_error_handler(DEAD_BEEF, line_num, p_file_name);
 }
 
-
 /**@brief Function for handling Peer Manager events.
  *
  * @param[in] p_evt  Peer Manager event.
@@ -229,7 +259,7 @@ void assert_nrf_callback(uint16_t line_num, const uint8_t * p_file_name)
 static void pm_evt_handler(pm_evt_t const * p_evt)
 {
     NRF_LOG_INFO("ENTERED PM_EVT_HANDLER");
-    NRF_LOG_FLUSH();
+    //NRF_LOG_FLUSH();
     pm_handler_on_pm_evt(p_evt);
     pm_handler_flash_clean(p_evt);
 
@@ -241,7 +271,7 @@ static void pm_evt_handler(pm_evt_t const * p_evt)
             break;
 
         case PM_EVT_PEERS_DELETE_SUCCEEDED:
-            NRF_LOG_INFO("PM_EVT_CONN_SEC_SUCCEEDED");
+            NRF_LOG_INFO("PM_EVT_PEERS_DELETE_SUCCEEDED");
             NRF_LOG_FLUSH();            
             advertising_start(false);
             break;
@@ -266,10 +296,9 @@ static void pm_evt_handler(pm_evt_t const * p_evt)
 }
 
 
-
 /**@brief Function for initializing the timer module.
  */
-static inline void timers_init(void)
+void timers_init(void)
 {
     uint32_t err_code;
     err_code = app_timer_init();
@@ -283,7 +312,7 @@ static inline void timers_init(void)
  *          Profile) parameters of the device. It also sets the permissions 
  *          and appearance.
  */
-static inline void gap_params_init(void)
+void gap_params_init(void)
 {
     uint32_t                err_code;
     ble_gap_conn_params_t   gap_conn_params;
@@ -320,6 +349,215 @@ static void nrf_qwr_error_handler(uint32_t nrf_error)
     APP_ERROR_HANDLER(nrf_error);
 }
 
+// Helper function
+void substring(char s[], char sub[], int p, int l) {
+   int c = 0;
+   
+   while (c < l) {
+      sub[c] = s[p+c-1];
+      c++;
+   }
+   sub[c] = '\0';
+}
+
+// Read saadc values for temperature, battery level, and pH to store for calibration
+void read_saadc_for_calibration(void) 
+{
+    int NUM_SAMPLES = 50;
+    nrf_saadc_value_t temp_val = 0;
+    ret_code_t err_code;
+    disable_pH_voltage_reading();
+    AVG_PH_VAL = 0;
+    READ_CAL_DATA = true;
+    PH_IS_READ = false;
+    // Make sure isfet circuit is enabled for saadc readings
+    enable_isfet_circuit();
+    nrf_delay_ms(10);
+    // Take saadc readings for pH, temp and battery
+    enable_pH_voltage_reading();
+    for (int i = 0; i < NUM_SAMPLES; i++) {
+      err_code = nrfx_saadc_sample_convert(0, &temp_val);
+      APP_ERROR_CHECK(err_code);
+      AVG_PH_VAL += saadc_result_to_mv(temp_val);
+    }
+    AVG_PH_VAL = AVG_PH_VAL / NUM_SAMPLES;
+    NRF_LOG_INFO("averaged avg_ph_val: %u\n");
+    NRF_LOG_FLUSH();
+    // Assign averaged readings to the correct calibration point
+    if(!PT1_READ){
+      PT1_MV_VAL = (double)AVG_PH_VAL;
+      PT1_READ   = true;
+    }
+    else if (PT1_READ && !PT2_READ){
+      PT2_MV_VAL = (double)AVG_PH_VAL;
+      PT2_READ = true;
+    }
+    else if (PT1_READ && PT2_READ && !PT3_READ){
+       PT3_MV_VAL = (double)AVG_PH_VAL;
+       PT3_READ = true;
+    }    
+    disable_pH_voltage_reading();
+}
+
+/*
+ * Use the values read from read_saadc_for_calibration to reset the M, B and R values
+ * to recalibrate accuracy of ISFET voltage output to pH value conversions
+ */
+void perform_calibration(uint8_t cal_pts)
+{
+  if (cal_pts == 1) {
+    // Compare mV for pH value to mV calculated for same pH with current M & B values,
+    // then adjust B value by the difference in mV values (shift intercept of line)
+
+  }
+  else if (cal_pts == 2) {
+    // Create arrays of pH value and corresponding mV values (change all line properties)
+    double x1 = PT1_MV_VAL;
+    double x2 = PT2_MV_VAL;
+    double y1 = PT1_PH_VAL;
+    double y2 = PT2_PH_VAL;
+    double x_vals[] = {x1, x2};
+    double y_vals[] = {y1, y2};
+    linreg(2, x_vals, y_vals);
+  }
+  else if (cal_pts == 3) {
+    // Create arrays of pH value and corresponding mV values (change all line properties)
+    double x1 = PT1_MV_VAL;
+    double x2 = PT2_MV_VAL;
+    double x3 = PT3_MV_VAL;
+    double y1 = PT1_PH_VAL;
+    double y2 = PT2_PH_VAL;
+    double y3 = PT3_PH_VAL;
+    double x_vals[] = {x1, x2, x3};
+    double y_vals[] = {y1, y2, y3};
+    NRF_LOG_INFO( "x1: " NRF_LOG_FLOAT_MARKER "\n", NRF_LOG_FLOAT(x1));
+    NRF_LOG_FLUSH();NRF_LOG_FLUSH();
+    NRF_LOG_INFO( "x2: " NRF_LOG_FLOAT_MARKER "\n", NRF_LOG_FLOAT(x2));
+    NRF_LOG_FLUSH();
+    NRF_LOG_INFO( "x3: " NRF_LOG_FLOAT_MARKER "\n", NRF_LOG_FLOAT(x3));
+    NRF_LOG_FLUSH();
+    NRF_LOG_INFO( "y1: " NRF_LOG_FLOAT_MARKER "\n", NRF_LOG_FLOAT(y1));
+    NRF_LOG_FLUSH();
+    NRF_LOG_INFO( "y2: " NRF_LOG_FLOAT_MARKER "\n", NRF_LOG_FLOAT(y2));
+    NRF_LOG_FLUSH();
+    NRF_LOG_INFO( "y3: " NRF_LOG_FLOAT_MARKER "\n", NRF_LOG_FLOAT(y3));
+    NRF_LOG_FLUSH();
+    linreg(3, x_vals, y_vals);
+  }
+}
+
+/*
+ * Checks packet contents to appropriately perform calibration
+ */
+void check_for_calibration(char **packet)
+{
+    // Possible Strings to be received by pH device
+    char *STARTCAL1 = "STARTCAL1";
+    char *STARTCAL2 = "STARTCAL2";
+    char *STARTCAL3 = "STARTCAL3";
+    char *PWROFF    = "PWROFF";
+    char *PT1       = "PT1";
+    char *PT2       = "PT2";
+    char *PT3       = "PT3";
+
+    // Possible strings to send to mobile application
+    char *CALBEGIN = "CALBEGIN";
+    char *PT1CONF  = "PT1CONF";
+    char *PT2CONF  = "PT2CONF";
+    char *PT3CONF  = "PT3CONF";
+
+    // Variables to hold sizes of strings for ble_nus_send function
+    uint16_t SIZE_BEGIN = 9;
+    uint16_t SIZE_CONF  = 8;
+
+    // Used for parsing out pH value from PT1_X.Y (etc) packets
+    char pH_val_substring[4];
+
+    uint32_t err_code;
+
+    if (strstr(*packet, PWROFF) != NULL){
+        nrfx_gpiote_out_clear(CHIP_POWER_PIN);
+    }
+
+    if (strstr(*packet, STARTCAL1) != NULL){
+        CAL_MODE = true;
+        NUM_CAL_PTS = 1;
+        // Make sure other processes are stopped and reset so calibration can occur
+        disable_pH_voltage_reading();
+        err_code = ble_nus_data_send(&m_nus, CALBEGIN, &SIZE_BEGIN, m_conn_handle);
+        APP_ERROR_CHECK(err_code);
+    }
+    else if (strstr(*packet, STARTCAL2) != NULL){
+        CAL_MODE = true;
+        NUM_CAL_PTS = 2;
+        // Make sure other processes are stopped and reset so calibration can occur
+        disable_pH_voltage_reading();
+        err_code = ble_nus_data_send(&m_nus, CALBEGIN, &SIZE_BEGIN, m_conn_handle);
+        APP_ERROR_CHECK(err_code);
+    }
+    else if (strstr(*packet, STARTCAL3) != NULL) {
+        CAL_MODE = true;
+        NUM_CAL_PTS = 3;
+        // Make sure other processes are stopped and reset so calibration can occur
+        disable_pH_voltage_reading();
+        err_code = ble_nus_data_send(&m_nus, CALBEGIN, &SIZE_BEGIN, m_conn_handle);
+        APP_ERROR_CHECK(err_code);
+    }
+
+    if (strstr(*packet, PT1) != NULL) {
+        // Parse out the pH value from the packet, will always be format "X.Y"
+        substring(*packet, pH_val_substring, 5, 3);
+        PT1_PH_VAL = atof(pH_val_substring);   
+
+        read_saadc_for_calibration();
+        err_code = ble_nus_data_send(&m_nus, PT1CONF, &SIZE_CONF, m_conn_handle);
+        APP_ERROR_CHECK(err_code);
+        // Restart normal data transmision once calibration is complete
+        if (NUM_CAL_PTS == 1) {
+          perform_calibration(1);
+          CAL_MODE = false;
+          READ_CAL_DATA = false;
+          CAL_PERFORMED = true;
+          restart_pH_interval_timer();
+        }
+    }
+    else if (strstr(*packet, PT2) != NULL) {
+        // Parse out the pH value from the packet, will always be format "X.Y"
+        substring(*packet, pH_val_substring, 5, 3);
+        PT2_PH_VAL = atof(pH_val_substring);
+        
+        read_saadc_for_calibration();
+        err_code = ble_nus_data_send(&m_nus, PT2CONF, &SIZE_CONF, m_conn_handle);
+        APP_ERROR_CHECK(err_code);
+        // Restart normal data transmision once calibration is complete
+        if (NUM_CAL_PTS == 2) {
+          perform_calibration(2);
+          CAL_MODE = false;
+          READ_CAL_DATA = false;
+          CAL_PERFORMED = true;
+          restart_pH_interval_timer();
+        }
+    }
+    else if (strstr(*packet, PT3) != NULL) {
+        // Parse out the pH value from the packet, will always be format "X.Y"
+        substring(*packet, pH_val_substring, 5, 3);
+        PT3_PH_VAL = atof(pH_val_substring); 
+       
+        read_saadc_for_calibration();
+        err_code = ble_nus_data_send(&m_nus, PT3CONF, &SIZE_CONF, m_conn_handle);
+        APP_ERROR_CHECK(err_code);
+        // Restart normal data transmision once calibration is complete
+        if (NUM_CAL_PTS == 3) {
+          perform_calibration(3);
+          CAL_MODE = false;
+          READ_CAL_DATA = false;
+          CAL_PERFORMED = true;
+          NRF_LOG_FLUSH();
+          restart_pH_interval_timer();
+        }    
+    }
+}
+
 
 /**@brief Function for handling the data from the Nordic UART Service.
  *
@@ -329,14 +567,18 @@ static void nrf_qwr_error_handler(uint32_t nrf_error)
  * @param[in] p_evt       Nordic UART Service event.
  */
 /**@snippet [Handling the data received over BLE] */
-static inline void nus_data_handler(ble_nus_evt_t * p_evt)
+void nus_data_handler(ble_nus_evt_t * p_evt)
 {
 
     if (p_evt->type == BLE_NUS_EVT_RX_DATA)
     {
+        // Array to store data received by smartphone will never exceed 9 characters
+        char data[10];
+        // Pointer to array
+        char *data_ptr = data;
         uint32_t err_code;
 
-        NRF_LOG_DEBUG("Received data from BLE NUS. Writing data on UART.");
+        NRF_LOG_DEBUG("Received data from BLE NUS.\n");
         NRF_LOG_HEXDUMP_DEBUG(p_evt->params.rx_data.p_data, 
                                             p_evt->params.rx_data.length);
 
@@ -344,7 +586,8 @@ static inline void nus_data_handler(ble_nus_evt_t * p_evt)
         {
             do
             {
-                err_code = app_uart_put(p_evt->params.rx_data.p_data[i]);
+                // Parse data into array
+                data[i] = p_evt->params.rx_data.p_data[i];
                 if ((err_code != NRF_SUCCESS) && (err_code != NRF_ERROR_BUSY))
                 {
                     NRF_LOG_ERROR("Failed receiving NUS message. Error 0x%x. ", 
@@ -353,10 +596,8 @@ static inline void nus_data_handler(ble_nus_evt_t * p_evt)
                 }
             } while (err_code == NRF_ERROR_BUSY);
         }
-        if (p_evt->params.rx_data.p_data[p_evt->params.rx_data.length - 1] == '\r')
-        {
-            while (app_uart_put('\n') == NRF_ERROR_BUSY);
-        }
+        // Check pack for calibration protocol details
+        check_for_calibration(&data_ptr);
     }
 
 }
@@ -733,7 +974,7 @@ static void advertising_start(bool erase_bonds)
 
 /* This function sets enable pin for ISFET circuitry to HIGH
  */
-static inline void enable_isfet_circuit(void)
+void enable_isfet_circuit(void)
 {
     nrf_drv_gpiote_out_config_t config = NRFX_GPIOTE_CONFIG_OUT_SIMPLE(false);
     if(nrf_drv_gpiote_is_init() == false) {
@@ -743,12 +984,32 @@ static inline void enable_isfet_circuit(void)
     nrf_drv_gpiote_out_set(ENABLE_ISFET_PIN);
 }
 
+/* This function holds POWER ON line HIGH to keep chip turned on
+ */
+void turn_chip_power_on(void)
+{
+    nrf_drv_gpiote_out_config_t config = NRFX_GPIOTE_CONFIG_OUT_SIMPLE(false);
+    if(nrf_drv_gpiote_is_init() == false) {
+          nrf_drv_gpiote_init();
+    }
+    nrf_drv_gpiote_out_init(CHIP_POWER_PIN, &config);
+    nrf_drv_gpiote_out_set(CHIP_POWER_PIN);
+}
+
+/* This functions turns POWER ON line LOW to turn the chip completely off
+ */
+void turn_chip_power_off(void)
+{
+    nrfx_gpiote_out_clear(CHIP_POWER_PIN);
+}
+
 /* This function sets enable pin for ISFET circuitry to LOW
  */
-static inline void disable_isfet_circuit(void)
+void disable_isfet_circuit(void)
 {
      // Redundant, but follows design
-     nrfx_gpiote_uninit();
+     // nrfx_gpiote_uninit();
+     nrfx_gpiote_out_clear(ENABLE_ISFET_PIN);
 }
 
 void timer_handler(nrf_timer_event_t event_type, void * p_context)
@@ -757,7 +1018,7 @@ void timer_handler(nrf_timer_event_t event_type, void * p_context)
 }
 
 
-static inline void saadc_sampling_event_init(void)
+void saadc_sampling_event_init(void)
 {
     ret_code_t err_code;
 
@@ -791,14 +1052,14 @@ static inline void saadc_sampling_event_init(void)
 }
 
 
-static inline void saadc_sampling_event_enable(void)
+void saadc_sampling_event_enable(void)
 {
     ret_code_t err_code = nrf_drv_ppi_channel_enable(m_ppi_channel);
     APP_ERROR_CHECK(err_code);
 }
 
 
-static inline void restart_saadc(void)
+void restart_saadc(void)
 {
     nrfx_timer_uninit(&m_timer);
     nrfx_ppi_channel_free(m_ppi_channel);
@@ -809,6 +1070,11 @@ static inline void restart_saadc(void)
     enable_pH_voltage_reading(); 
 }
 
+double calculate_pH_from_mV(uint32_t ph_val)
+{
+    // pH = (ph_val - BVAL_CALIBRATION) / (MVAL_CALIBRATION)
+    return ((double)ph_val * MVAL_CALIBRATION) + BVAL_CALIBRATION;
+}
 
 // Pack integer values into byte array to send via bluetooth
 void create_bluetooth_packet(uint32_t ph_val,
@@ -822,17 +1088,28 @@ void create_bluetooth_packet(uint32_t ph_val,
        0,0,0,0,10};   battery value arr[10-13], EOL arr[14]
     */
 
-    uint32_t temp = 0;                  // hold intermediate divisions of variables
+    uint32_t temp = 0;    // hold intermediate divisions of variables
     uint32_t ASCII_DIG_BASE = 48;
 
     // Pack ph_val into appropriate location
-    temp = ph_val;
-    for(int i = 3; i >= 0; i--){
-        if (i == 3) total_packet[i] = (uint8_t)(temp % 10 + ASCII_DIG_BASE);
-        else {
-            temp = temp / 10;
-            total_packet[i] = (uint8_t)(temp % 10 + ASCII_DIG_BASE);
-        }
+    if (!CAL_PERFORMED) {
+      temp = ph_val;
+      for(int i = 3; i >= 0; i--){
+          if (i == 3) total_packet[i] = (uint8_t)(temp % 10 + ASCII_DIG_BASE);
+          else {
+              temp = temp / 10;
+              total_packet[i] = (uint8_t)(temp % 10 + ASCII_DIG_BASE);
+          }
+      }
+    }
+    else if (CAL_PERFORMED) {
+      double real_pH  = calculate_pH_from_mV(ph_val);
+      double pH_decimal_vals = (real_pH - floor(real_pH)) * 100;
+      pH_decimal_vals = round(pH_decimal_vals / 25) * 25;
+      total_packet[0] = (uint8_t) ((uint8_t)floor(real_pH) + ASCII_DIG_BASE);
+      total_packet[1] = 46;
+      total_packet[2] = (uint8_t) (((uint8_t)pH_decimal_vals / 10) + ASCII_DIG_BASE);
+      total_packet[3] = (uint8_t) (((uint8_t)pH_decimal_vals % 10) + ASCII_DIG_BASE);
     }
 
     // Pack temp_val into appropriate location
@@ -857,11 +1134,11 @@ void create_bluetooth_packet(uint32_t ph_val,
     }
 }
 
-static inline uint32_t saadc_result_to_mv(uint32_t saadc_result)
+uint32_t saadc_result_to_mv(uint32_t saadc_result)
 {
     float adc_denom     = 4096.0;
-    float adc_ref_mv = 600.0;
-    float adc_prescale    = 5.0;
+    float adc_ref_mv    = 600.0;
+    float adc_prescale  = 5.0;
     float adc_res_in_mv = (((float)saadc_result*adc_ref_mv)/adc_denom) * adc_prescale;
 
     return (uint32_t)adc_res_in_mv;
@@ -877,7 +1154,7 @@ static inline uint32_t saadc_result_to_mv(uint32_t saadc_result)
  *      Workaround is to average values besides 1, divide by 
  *      samples_in_buffer -1 .
  */
-static inline void saadc_callback(nrf_drv_saadc_evt_t const * p_event)
+void saadc_callback(nrf_drv_saadc_evt_t const * p_event)
 {
     if (p_event->type == NRF_DRV_SAADC_EVT_DONE) 
     {
@@ -889,9 +1166,9 @@ static inline void saadc_callback(nrf_drv_saadc_evt_t const * p_event)
                                   48,48,48,48,44,    /* Temperature, comma */
                                   48,48,48,48,10};   /* Battery value, EOL */
 
-        err_code = nrf_drv_saadc_buffer_convert(p_event->data.done.p_buffer, 
-                                                            SAMPLES_IN_BUFFER); 
-        APP_ERROR_CHECK(err_code);
+        //err_code = nrf_drv_saadc_buffer_convert(p_event->data.done.p_buffer, 
+        //                                                    SAMPLES_IN_BUFFER); 
+        //APP_ERROR_CHECK(err_code);
         // Sum and average SAADC values
         for (int i = 1; i < SAMPLES_IN_BUFFER; i++)
         {
@@ -901,7 +1178,7 @@ static inline void saadc_callback(nrf_drv_saadc_evt_t const * p_event)
             else {
                 avg_saadc_reading += p_event->data.done.p_buffer[i];
             }
-            NRF_LOG_INFO("%d\n", p_event->data.done.p_buffer[i]);
+            //NRF_LOG_INFO("%d\n", p_event->data.done.p_buffer[i]);
         }
         NRF_LOG_INFO("\n");
         NRF_LOG_FLUSH();
@@ -923,27 +1200,51 @@ static inline void saadc_callback(nrf_drv_saadc_evt_t const * p_event)
             BATTERY_IS_READ = true;
             restart_saadc();
         }
-        // Once temp, batter and ph have been read, create and send data in packet
+        // Once temp, battery and ph have been read, create and send data in packet
+        // or adjust the calibration points as necessary
         else {
             AVG_TEMP_VAL = saadc_result_to_mv(avg_saadc_reading);
-            NRF_LOG_INFO("read temp val: %d", AVG_TEMP_VAL);
+            NRF_LOG_INFO("read temp val: %d\n", AVG_TEMP_VAL);
             NRF_LOG_FLUSH();
-  
-            // Create bluetooth data
-            create_bluetooth_packet(AVG_PH_VAL, AVG_BATT_VAL, 
-                                    AVG_TEMP_VAL, total_packet);
 
-            // Send data
-            err_code = ble_nus_data_send(&m_nus, total_packet, 
-                                         &total_size, m_conn_handle);
-            //APP_ERROR_CHECK(err_code);
+            NRF_LOG_ERROR( "MVAL: " NRF_LOG_FLOAT_MARKER "\n", NRF_LOG_FLOAT(MVAL_CALIBRATION));
+            NRF_LOG_ERROR( "BVAL: " NRF_LOG_FLOAT_MARKER "\n", NRF_LOG_FLOAT(BVAL_CALIBRATION));
+          
             // reset global control boolean
             PH_IS_READ = false;
             BATTERY_IS_READ = false;
- 
-            // Turn off peripherals
-            NRF_LOG_INFO("BLUETOOTH DATA SENT\n");
-            NRF_LOG_FLUSH();
+  
+            // Pack data and send via bluetooth if not in calibration mode
+            if (!CAL_MODE) {
+              // Create bluetooth data
+              create_bluetooth_packet(AVG_PH_VAL, AVG_BATT_VAL, 
+                                      AVG_TEMP_VAL, total_packet);
+
+              // Send data
+              err_code = ble_nus_data_send(&m_nus, total_packet, 
+                                           &total_size, m_conn_handle);
+              //APP_ERROR_CHECK(err_code);
+              
+
+              // Turn off peripherals
+              NRF_LOG_INFO("BLUETOOTH DATA SENT\n");
+              NRF_LOG_FLUSH();
+            }
+//            else if (CAL_MODE && READ_CAL_DATA) {
+//              // do stuff for calibration (maybe don't need to do anything here?)
+//              if(!PT1_READ){
+//                PT1_MV_VAL = (double)AVG_PH_VAL;
+//                PT1_READ = true;
+//              }
+//              else if (PT1_READ && !PT2_READ){
+//                PT2_MV_VAL = (double)AVG_PH_VAL;
+//                PT2_READ = true;
+//              }
+//              else if (PT1_READ && PT2_READ && !PT3_READ){
+//                PT3_MV_VAL = (double)AVG_PH_VAL;
+//                PT3_READ = true;
+//              }
+//            }
             disable_pH_voltage_reading();
  
             NRF_LOG_INFO("SAADC DISABLED\n");
@@ -953,11 +1254,39 @@ static inline void saadc_callback(nrf_drv_saadc_evt_t const * p_event)
 }
 
 
+void saadc_blocking_callback(nrf_drv_saadc_evt_t const * p_event)
+{
+    // Don't need to do anything
+}
+
+
+void init_saadc_for_buffer_conversion(nrf_saadc_channel_config_t channel_config)
+{
+    ret_code_t err_code;
+    err_code = nrf_drv_saadc_init(NULL, saadc_callback);
+    APP_ERROR_CHECK(err_code);
+
+    err_code = nrf_drv_saadc_channel_init(0, &channel_config);
+    APP_ERROR_CHECK(err_code);
+
+    err_code = nrf_drv_saadc_buffer_convert(m_buffer_pool[0], SAMPLES_IN_BUFFER);
+    APP_ERROR_CHECK(err_code);
+}
+
+void init_saadc_for_blocking_sample_conversion(nrf_saadc_channel_config_t channel_config)
+{
+    ret_code_t err_code;
+    err_code = nrf_drv_saadc_init(NULL, saadc_blocking_callback);
+    APP_ERROR_CHECK(err_code);
+
+    err_code = nrf_drv_saadc_channel_init(0, &channel_config);
+    APP_ERROR_CHECK(err_code);
+}
+
 /* Reads pH transducer output
  */
 void saadc_init(void)
 {
-    ret_code_t err_code;
     nrf_saadc_input_t ANALOG_INPUT;
     // Change pin depending on global control boolean
     if (!PH_IS_READ) {
@@ -975,69 +1304,58 @@ void saadc_init(void)
 
     nrf_saadc_channel_config_t channel_config =
             NRF_SAADC_CUSTOM_CHANNEL_CONFIG_SE(ANALOG_INPUT);
-
-    err_code = nrf_drv_saadc_init(NULL, saadc_callback);
-    APP_ERROR_CHECK(err_code);
-
-    /*
-     * BUG: calibration never completes
-     */
-
-    // Calibrate offset
-    // if(!SAADC_CALIBRATED) {
-    //     while (nrfx_saadc_calibrate_offset() != NRFX_SUCCESS) {
-    //         NRF_LOG_INFO("calibration does not equal success\n");
-    //         NRF_LOG_FLUSH();
-    //         nrf_delay_us(10);
-    //     }
-    //     SAADC_CALIBRATED = true;
-    //     while (nrfx_saadc_is_busy()) {
-    //         NRF_LOG_INFO("saadc busy while restarting\n");
-    //         NRF_LOG_FLUSH();
-    //         nrf_delay_ms(1000);
-    //     }
-    // }   
-
-    err_code = nrf_drv_saadc_channel_init(0, &channel_config);
-    APP_ERROR_CHECK(err_code);
-
-    err_code = nrf_drv_saadc_buffer_convert(m_buffer_pool[0], SAMPLES_IN_BUFFER);
-    APP_ERROR_CHECK(err_code);
+    
+    if (!CAL_MODE)
+      init_saadc_for_buffer_conversion(channel_config);
+    else 
+      init_saadc_for_blocking_sample_conversion(channel_config);
 }
 
 
 /* This function initializes and enables SAADC sampling
  */
-static inline void enable_pH_voltage_reading(void)
+void enable_pH_voltage_reading(void)
 {
     saadc_init();
-    saadc_sampling_event_init();
-    saadc_sampling_event_enable();
+    if (!CAL_MODE) {
+      saadc_sampling_event_init();
+      saadc_sampling_event_enable();
+    }
     nrf_pwr_mgmt_run();
+}
+
+void restart_pH_interval_timer(void)
+{
+      ret_code_t err_code;
+      err_code = app_timer_start(m_timer_id, APP_TIMER_TICKS(DATA_INTERVAL), NULL);
+      APP_ERROR_CHECK(err_code);
+      nrf_pwr_mgmt_run();
+
+      NRF_LOG_INFO("TIMER RESTARTED (disable_ph_voltage_reading)\n");
+      NRF_LOG_FLUSH();
 }
 
 /* Function unitializes and disables SAADC sampling, restarts 1 second timer
  */
-static inline void disable_pH_voltage_reading(void)
+void disable_pH_voltage_reading(void)
 {
     nrfx_timer_uninit(&m_timer);
     nrfx_ppi_channel_free(m_ppi_channel);
     nrfx_saadc_uninit();
+    while(nrfx_saadc_is_busy()) {
+        // make sure SAADC is not busy
+    }
 
     // *** DISABLE ENABLE ***
-    //disable_isfet_circuit();
+    disable_isfet_circuit();
 
-    // Restart timer
-    ret_code_t err_code;
-    err_code = app_timer_start(m_timer_id, APP_TIMER_TICKS(1500), NULL);
-    APP_ERROR_CHECK(err_code);
-    nrf_pwr_mgmt_run();
-
-    NRF_LOG_INFO("TIMER RESTARTED (disable_ph_voltage_reading)\n");
-    NRF_LOG_FLUSH();
+    if (!CAL_MODE) {
+      // Restart timer
+      restart_pH_interval_timer();
+    }
 }
 
-static inline void single_shot_timer_handler()
+void single_shot_timer_handler()
 {
     // disable timer
     ret_code_t err_code;
@@ -1049,7 +1367,16 @@ static inline void single_shot_timer_handler()
     // PWM output, ISFET capacitor, etc
     nrf_delay_ms(10);              
     // Begin SAADC initialization/start
+
+    /* * * * * * * * * * * * * * *
+     *  UNCOMMENT TO SEND DATA
+     */
+
     enable_pH_voltage_reading();
+
+    /*
+     *  UNCOMMENT TO SEND DATA
+     * * * * * * * * * * * * * * */
 }
 
 /**@brief Function for handling events from the GATT library. */
@@ -1076,11 +1403,13 @@ void gatt_evt_handler(nrf_ble_gatt_t * p_gatt, nrf_ble_gatt_evt_t const * p_evt)
     APP_ERROR_CHECK(err_code);
         
     // 1 second timer intervals
-    err_code = app_timer_start(m_timer_id, APP_TIMER_TICKS(2000), NULL);
+    err_code = app_timer_start(m_timer_id, APP_TIMER_TICKS(DATA_INTERVAL), NULL);
     APP_ERROR_CHECK(err_code);
 
     NRF_LOG_INFO("TIMER STARTED (gatt_evt_handler) \n");
     NRF_LOG_FLUSH();
+
+      
 }
 
 /**@brief Function for initializing the GATT library. */
@@ -1096,11 +1425,94 @@ void gatt_init(void)
     APP_ERROR_CHECK(err_code);
 }
 
+inline static double sqr(double x) {
+    return x*x;
+}
+
+/*
+ * Function for running linear regression on two and three point calibration data
+ */
+void linreg(int num, double x[], double y[])
+{
+    double   sumx  = 0.0;                     /* sum of x     */
+    double   sumx2 = 0.0;                     /* sum of x**2  */
+    double   sumxy = 0.0;                     /* sum of x * y */
+    double   sumy  = 0.0;                     /* sum of y     */
+    double   sumy2 = 0.0;                     /* sum of y**2  */
+
+    for (int i=0;i<num;i++){ 
+        sumx  += x[i];       
+        sumx2 += sqr(x[i]);  
+        sumxy += x[i] * y[i];
+        sumy  += y[i];      
+        sumy2 += sqr(y[i]); 
+    } 
+
+    double denom = (num * sumx2 - sqr(sumx));
+
+    NRF_LOG_INFO( "sumx: " NRF_LOG_FLOAT_MARKER "\n", NRF_LOG_FLOAT(sumx));
+    NRF_LOG_FLUSH();
+    NRF_LOG_INFO( "sumx2: " NRF_LOG_FLOAT_MARKER "\n", NRF_LOG_FLOAT(sumx2));
+    NRF_LOG_FLUSH();
+    NRF_LOG_INFO( "sumxy: " NRF_LOG_FLOAT_MARKER "\n", NRF_LOG_FLOAT(sumxy));
+    NRF_LOG_FLUSH();
+    NRF_LOG_INFO( "sumy: " NRF_LOG_FLOAT_MARKER "\n", NRF_LOG_FLOAT(sumy));
+    NRF_LOG_FLUSH();
+    NRF_LOG_INFO( "sumy2: " NRF_LOG_FLOAT_MARKER "\n", NRF_LOG_FLOAT(sumy2));
+    NRF_LOG_FLUSH();
+    NRF_LOG_INFO( "denom: " NRF_LOG_FLOAT_MARKER "\n", NRF_LOG_FLOAT(denom));
+    NRF_LOG_FLUSH();
+
+    if (denom == 0) {
+        // singular matrix. can't solve the problem.
+        NRF_LOG_INFO("singular matrix, cannot solve regression\n");
+    }
+
+    MVAL_CALIBRATION = (num * sumxy  -  sumx * sumy) / denom;
+    BVAL_CALIBRATION = (sumy * sumx2  -  sumx * sumxy) / denom;
+    RVAL_CALIBRATION = (sumxy - sumx * sumy / num) /    /* compute correlation coeff */
+                        sqrt((sumx2 - sqr(sumx)/num) *
+                       (sumy2 - sqr(sumy)/num));
+
+    NRF_LOG_INFO( "MVAL: " NRF_LOG_FLOAT_MARKER "\n", NRF_LOG_FLOAT(MVAL_CALIBRATION));
+    NRF_LOG_FLUSH();
+    NRF_LOG_INFO( "BVAL: " NRF_LOG_FLOAT_MARKER "\n", NRF_LOG_FLOAT(BVAL_CALIBRATION));
+    NRF_LOG_FLUSH();
+    NRF_LOG_INFO( "RVAL: " NRF_LOG_FLOAT_MARKER "\n", NRF_LOG_FLOAT(RVAL_CALIBRATION));
+    NRF_LOG_FLUSH();
+}
+
+//void linreg(int n, double x[], double y[]) 
+//{ 
+//    int i, j; 
+//    double m, c, sum_x = 0, sum_y = 0, sum_xy = 0, sum_x2 = 0; 
+//    for (i = 0; i < n; i++) { 
+//        sum_x += x[i]; 
+//        sum_y += y[i]; 
+//        sum_xy += x[i] * y[i]; 
+//        sum_x2 += (x[i] * x[i]); 
+//    } 
+//  
+//    m = (n * sum_xy - sum_x * sum_y) / (n * sum_x2 - (sum_x * sum_x)); 
+//    c = (sum_y - m * sum_x) / n; 
+//
+//    MVAL_CALIBRATION = m;
+//    BVAL_CALIBRATION = c;
+//
+//    NRF_LOG_INFO( "MVAL: " NRF_LOG_FLOAT_MARKER "\n", NRF_LOG_FLOAT(MVAL_CALIBRATION));
+//    NRF_LOG_INFO( "BVAL: " NRF_LOG_FLOAT_MARKER "\n", NRF_LOG_FLOAT(BVAL_CALIBRATION));
+//} 
+
 /**@brief Application main function.
  */
 int main(void)
 {
     bool erase_bonds = false;
+
+
+    // Call function very first to turn on the chip
+    turn_chip_power_on();
+    // enable_isfet_circuit();
 
     log_init();
     timers_init();
@@ -1113,6 +1525,7 @@ int main(void)
     conn_params_init();
     peer_manager_init();
     advertising_start(erase_bonds);
+
     // Enter main loop.
     while (true)
     {

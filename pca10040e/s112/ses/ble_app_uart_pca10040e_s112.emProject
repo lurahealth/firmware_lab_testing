@@ -148,5 +148,7 @@
   <configuration
     Name="Release"
     c_preprocessor_definitions="NDEBUG"
-    gcc_optimization_level="Optimize For Size" />
+    gcc_optimization_level="Optimize For Size"
+    linker_output_format="hex"
+    linker_section_placement_macros="" />
 </solution>
