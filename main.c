@@ -229,6 +229,7 @@ void turn_chip_power_on         (void);
 void turn_chip_power_off         (void);
 void restart_saadc              (void);
 void restart_pH_interval_timer  (void);
+double calculate_pH_from_mV     (uint32_t ph_val);
 void linreg                     (int num, double x[], double y[]);
 void perform_calibration        (uint8_t cal_pts);
 static void advertising_start   (bool erase_bonds);
@@ -399,6 +400,20 @@ void read_saadc_for_calibration(void)
     disable_pH_voltage_reading();
 }
 
+/* Helper function to clear calibration global state variables
+ */
+void reset_calibration_state()
+{
+    CAL_MODE        = false;
+    READ_CAL_DATA   = false;
+    CAL_PERFORMED   = true;
+    PT1_READ        = false;
+    PT2_READ        = false;
+    PT3_READ        = false;
+    PH_IS_READ      = false;
+    BATTERY_IS_READ = false;
+}
+
 /*
  * Use the values read from read_saadc_for_calibration to reset the M, B and R values
  * to recalibrate accuracy of ISFET voltage output to pH value conversions
@@ -408,6 +423,10 @@ void perform_calibration(uint8_t cal_pts)
   if (cal_pts == 1) {
     // Compare mV for pH value to mV calculated for same pH with current M & B values,
     // then adjust B value by the difference in mV values (shift intercept of line)
+    double incorrect_pH  = calculate_pH_from_mV((uint32_t)PT1_MV_VAL);
+    double cal_adjustment = PT1_PH_VAL - incorrect_pH;
+    BVAL_CALIBRATION = BVAL_CALIBRATION + cal_adjustment;
+    NRF_LOG_INFO("incorrect: %d, pt1: %d, adjustment: %d, BVAL: %d\n", (int)incorrect_pH, (int)PT1_PH_VAL, (int)cal_adjustment, (int)(BVAL_CALIBRATION));
 
   }
   else if (cal_pts == 2) {
@@ -430,18 +449,6 @@ void perform_calibration(uint8_t cal_pts)
     double y3 = PT3_PH_VAL;
     double x_vals[] = {x1, x2, x3};
     double y_vals[] = {y1, y2, y3};
-    NRF_LOG_INFO( "x1: " NRF_LOG_FLOAT_MARKER "\n", NRF_LOG_FLOAT(x1));
-    NRF_LOG_FLUSH();NRF_LOG_FLUSH();
-    NRF_LOG_INFO( "x2: " NRF_LOG_FLOAT_MARKER "\n", NRF_LOG_FLOAT(x2));
-    NRF_LOG_FLUSH();
-    NRF_LOG_INFO( "x3: " NRF_LOG_FLOAT_MARKER "\n", NRF_LOG_FLOAT(x3));
-    NRF_LOG_FLUSH();
-    NRF_LOG_INFO( "y1: " NRF_LOG_FLOAT_MARKER "\n", NRF_LOG_FLOAT(y1));
-    NRF_LOG_FLUSH();
-    NRF_LOG_INFO( "y2: " NRF_LOG_FLOAT_MARKER "\n", NRF_LOG_FLOAT(y2));
-    NRF_LOG_FLUSH();
-    NRF_LOG_INFO( "y3: " NRF_LOG_FLOAT_MARKER "\n", NRF_LOG_FLOAT(y3));
-    NRF_LOG_FLUSH();
     linreg(3, x_vals, y_vals);
   }
 }
@@ -515,9 +522,7 @@ void check_for_calibration(char **packet)
         // Restart normal data transmision once calibration is complete
         if (NUM_CAL_PTS == 1) {
           perform_calibration(1);
-          CAL_MODE = false;
-          READ_CAL_DATA = false;
-          CAL_PERFORMED = true;
+          reset_calibration_state();
           restart_pH_interval_timer();
         }
     }
@@ -532,9 +537,7 @@ void check_for_calibration(char **packet)
         // Restart normal data transmision once calibration is complete
         if (NUM_CAL_PTS == 2) {
           perform_calibration(2);
-          CAL_MODE = false;
-          READ_CAL_DATA = false;
-          CAL_PERFORMED = true;
+          reset_calibration_state();
           restart_pH_interval_timer();
         }
     }
@@ -549,10 +552,7 @@ void check_for_calibration(char **packet)
         // Restart normal data transmision once calibration is complete
         if (NUM_CAL_PTS == 3) {
           perform_calibration(3);
-          CAL_MODE = false;
-          READ_CAL_DATA = false;
-          CAL_PERFORMED = true;
-          NRF_LOG_FLUSH();
+          reset_calibration_state();
           restart_pH_interval_timer();
         }    
     }
@@ -1347,7 +1347,7 @@ void disable_pH_voltage_reading(void)
     }
 
     // *** DISABLE ENABLE ***
-    disable_isfet_circuit();
+    //disable_isfet_circuit();
 
     if (!CAL_MODE) {
       // Restart timer
@@ -1425,6 +1425,7 @@ void gatt_init(void)
     APP_ERROR_CHECK(err_code);
 }
 
+// Helper function for linreg
 inline static double sqr(double x) {
     return x*x;
 }
@@ -1450,19 +1451,6 @@ void linreg(int num, double x[], double y[])
 
     double denom = (num * sumx2 - sqr(sumx));
 
-    NRF_LOG_INFO( "sumx: " NRF_LOG_FLOAT_MARKER "\n", NRF_LOG_FLOAT(sumx));
-    NRF_LOG_FLUSH();
-    NRF_LOG_INFO( "sumx2: " NRF_LOG_FLOAT_MARKER "\n", NRF_LOG_FLOAT(sumx2));
-    NRF_LOG_FLUSH();
-    NRF_LOG_INFO( "sumxy: " NRF_LOG_FLOAT_MARKER "\n", NRF_LOG_FLOAT(sumxy));
-    NRF_LOG_FLUSH();
-    NRF_LOG_INFO( "sumy: " NRF_LOG_FLOAT_MARKER "\n", NRF_LOG_FLOAT(sumy));
-    NRF_LOG_FLUSH();
-    NRF_LOG_INFO( "sumy2: " NRF_LOG_FLOAT_MARKER "\n", NRF_LOG_FLOAT(sumy2));
-    NRF_LOG_FLUSH();
-    NRF_LOG_INFO( "denom: " NRF_LOG_FLOAT_MARKER "\n", NRF_LOG_FLOAT(denom));
-    NRF_LOG_FLUSH();
-
     if (denom == 0) {
         // singular matrix. can't solve the problem.
         NRF_LOG_INFO("singular matrix, cannot solve regression\n");
@@ -1473,35 +1461,8 @@ void linreg(int num, double x[], double y[])
     RVAL_CALIBRATION = (sumxy - sumx * sumy / num) /    /* compute correlation coeff */
                         sqrt((sumx2 - sqr(sumx)/num) *
                        (sumy2 - sqr(sumy)/num));
-
-    NRF_LOG_INFO( "MVAL: " NRF_LOG_FLOAT_MARKER "\n", NRF_LOG_FLOAT(MVAL_CALIBRATION));
-    NRF_LOG_FLUSH();
-    NRF_LOG_INFO( "BVAL: " NRF_LOG_FLOAT_MARKER "\n", NRF_LOG_FLOAT(BVAL_CALIBRATION));
-    NRF_LOG_FLUSH();
-    NRF_LOG_INFO( "RVAL: " NRF_LOG_FLOAT_MARKER "\n", NRF_LOG_FLOAT(RVAL_CALIBRATION));
-    NRF_LOG_FLUSH();
 }
 
-//void linreg(int n, double x[], double y[]) 
-//{ 
-//    int i, j; 
-//    double m, c, sum_x = 0, sum_y = 0, sum_xy = 0, sum_x2 = 0; 
-//    for (i = 0; i < n; i++) { 
-//        sum_x += x[i]; 
-//        sum_y += y[i]; 
-//        sum_xy += x[i] * y[i]; 
-//        sum_x2 += (x[i] * x[i]); 
-//    } 
-//  
-//    m = (n * sum_xy - sum_x * sum_y) / (n * sum_x2 - (sum_x * sum_x)); 
-//    c = (sum_y - m * sum_x) / n; 
-//
-//    MVAL_CALIBRATION = m;
-//    BVAL_CALIBRATION = c;
-//
-//    NRF_LOG_INFO( "MVAL: " NRF_LOG_FLOAT_MARKER "\n", NRF_LOG_FLOAT(MVAL_CALIBRATION));
-//    NRF_LOG_INFO( "BVAL: " NRF_LOG_FLOAT_MARKER "\n", NRF_LOG_FLOAT(BVAL_CALIBRATION));
-//} 
 
 /**@brief Application main function.
  */
