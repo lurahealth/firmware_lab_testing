@@ -102,6 +102,10 @@
 #include "peer_manager_handler.h"
 #include "ble_conn_state.h"
 
+// Included for persisent flash reads/writes
+#include "fds.h"
+#include "nrf_fstorage.h"
+
 #if defined (UART_PRESENT)
 #include "nrf_uart.h"
 #endif
@@ -113,7 +117,7 @@
 
 #define APP_BLE_CONN_CFG_TAG            1                                           /**< A tag identifying the SoftDevice BLE configuration. */
 
-#define DEVICE_NAME                     "Lura_Health_EV3_Rework_1"                   /**< Name of device. Will be included in the advertising data. */
+#define DEVICE_NAME                     "Lura_Health_Test"                   /**< Name of device. Will be included in the advertising data. */
 #define NUS_SERVICE_UUID_TYPE           BLE_UUID_TYPE_VENDOR_BEGIN                  /**< UUID type for the Nordic UART Service (vendor specific). */
 
 #define APP_BLE_OBSERVER_PRIO           3                                           /**< Application's BLE observer priority. You shouldn't need to modify this value. */
@@ -210,6 +214,7 @@ int      NUM_CAL_PTS       = 0;
 double   MVAL_CALIBRATION  = 0;
 double   BVAL_CALIBRATION  = 0;
 double   RVAL_CALIBRATION  = 0;
+static volatile uint8_t write_flag=0;
 
 
 static const nrf_drv_timer_t   m_timer = NRF_DRV_TIMER_INSTANCE(1);
@@ -1085,34 +1090,52 @@ void create_bluetooth_packet(uint32_t ph_val,
     /*
       {0,0,0,0,44,    pH value arr[0-3], comma arr[4]
        0,0,0,0,44,    temperature arr[5-8], comma arr[9]
-       0,0,0,0,10};   battery value arr[10-13], EOL arr[14]
+       0,0,0,0,44,    battery value arr[10-13], commar arr[14]
+       0 0 0 0,10};   raw pH value arr[15-18], EOL arr[19]
     */
 
     uint32_t temp = 0;    // hold intermediate divisions of variables
     uint32_t ASCII_DIG_BASE = 48;
 
-    // Pack ph_val into appropriate location
+    // If calibration has not been performed, store 0000 in real pH field [0-3],
+    // and store the raw SAADC data in the last field [15-18]
     if (!CAL_PERFORMED) {
       temp = ph_val;
       for(int i = 3; i >= 0; i--){
-          if (i == 3) total_packet[i] = (uint8_t)(temp % 10 + ASCII_DIG_BASE);
-          else {
-              temp = temp / 10;
-              total_packet[i] = (uint8_t)(temp % 10 + ASCII_DIG_BASE);
-          }
+        total_packet[i] = 0 + ASCII_DIG_BASE;
       }
     }
+    // If calibration has been performed, store eal pH in [0-3],
+    // and store the raw millivolt data in the last field [15-18]
     else if (CAL_PERFORMED) {
       double real_pH  = calculate_pH_from_mV(ph_val);
       double pH_decimal_vals = (real_pH - floor(real_pH)) * 100;
+      // Round pH values to 0.25 pH accuracy
       pH_decimal_vals = round(pH_decimal_vals / 25) * 25;
-      total_packet[0] = (uint8_t) ((uint8_t)floor(real_pH) + ASCII_DIG_BASE);
-      total_packet[1] = 46;
-      total_packet[2] = (uint8_t) (((uint8_t)pH_decimal_vals / 10) + ASCII_DIG_BASE);
-      total_packet[3] = (uint8_t) (((uint8_t)pH_decimal_vals % 10) + ASCII_DIG_BASE);
+      // If decimals round to 100, increment real pH value and set decimals to 0.00
+      if (pH_decimal_vals == 100) {
+        real_pH = real_pH + 1.0;
+        pH_decimal_vals = 0.00;
+      }
+      NRF_LOG_INFO("pH decimals: " NRF_LOG_FLOAT_MARKER " \n", NRF_LOG_FLOAT(pH_decimal_vals));
+      // If pH is 9.99 or lower, format with 2 decimal places (4 bytes total)
+      if (real_pH < 10.0) {
+        total_packet[0] = (uint8_t) ((uint8_t)floor(real_pH) + ASCII_DIG_BASE);
+        total_packet[1] = 46;
+        total_packet[2] = (uint8_t) (((uint8_t)pH_decimal_vals / 10) + ASCII_DIG_BASE);
+        total_packet[3] = (uint8_t) (((uint8_t)pH_decimal_vals % 10) + ASCII_DIG_BASE);
+      }
+      // If pH is 10.0 or great, format with 1 decimal place (still 4 bytes total)
+      else {
+        total_packet[0] = (uint8_t) ((uint8_t)floor(real_pH / 10) + ASCII_DIG_BASE);
+        total_packet[1] = (uint8_t) ((uint8_t)floor((uint8_t)real_pH % 10) + ASCII_DIG_BASE);
+        total_packet[2] = 46;
+        total_packet[3] = (uint8_t) (((uint8_t)pH_decimal_vals / 10) + ASCII_DIG_BASE);
+      }
     }
-
     // Pack temp_val into appropriate location
+    // Packing protocol for number abcd: 
+    //  [... 0, 0, 0, d] --> [... 0, 0, c, d] --> [... 0, b, c, d] --> [... a, b, c, d]
     temp = temp_val;
     for(int i = 8; i >= 5; i--){
         if (i == 8) total_packet[i] = (uint8_t)(temp % 10 + ASCII_DIG_BASE);
@@ -1121,12 +1144,23 @@ void create_bluetooth_packet(uint32_t ph_val,
             total_packet[i] = (uint8_t)(temp % 10 + ASCII_DIG_BASE);
         }
     }
-
     // Pack batt_val into appropriate location
+    // Packing protocol for number abcd: 
+    //  [... 0, 0, 0, d] --> [... 0, 0, c, d] --> [... 0, b, c, d] --> [... a, b, c, d]
     temp = batt_val;
-
     for(int i = 13; i >= 10; i--){
         if (i == 13) total_packet[i] = (uint8_t)(temp % 10 + ASCII_DIG_BASE);
+        else {
+            temp = temp / 10;
+            total_packet[i] = (uint8_t)(temp % 10 + ASCII_DIG_BASE);
+        }
+    }
+    // Pack batt_val into appropriate location
+    // Packing protocol for number abcd: 
+    //  [... 0, 0, 0, d] --> [... 0, 0, c, d] --> [... 0, b, c, d] --> [... a, b, c, d]
+    temp = ph_val;
+    for(int i = 18; i >= 15; i--){
+        if (i == 18) total_packet[i] = (uint8_t)(temp % 10 + ASCII_DIG_BASE);
         else {
             temp = temp / 10;
             total_packet[i] = (uint8_t)(temp % 10 + ASCII_DIG_BASE);
@@ -1159,12 +1193,13 @@ void saadc_callback(nrf_drv_saadc_evt_t const * p_event)
     if (p_event->type == NRF_DRV_SAADC_EVT_DONE) 
     {
         ret_code_t err_code;
-        uint16_t   total_size = 15;
+        uint16_t   total_size = 20;
         uint32_t   avg_saadc_reading = 0;
         // Byte array to store total packet
-        uint8_t total_packet[] = {48,48,48,48,44,    /* pH value, comma */
+        uint8_t total_packet[] = {48,48,48,48,44,    /* real pH value, comma */
                                   48,48,48,48,44,    /* Temperature, comma */
-                                  48,48,48,48,10};   /* Battery value, EOL */
+                                  48,48,48,48,44,    /* Battery value, comma */
+                                  48,48,48,48,10};   /* raw pH value, EOL */
 
         //err_code = nrf_drv_saadc_buffer_convert(p_event->data.done.p_buffer, 
         //                                                    SAMPLES_IN_BUFFER); 
@@ -1463,6 +1498,139 @@ void linreg(int num, double x[], double y[])
                        (sumy2 - sqr(sumy)/num));
 }
 
+/*
+ * Test for reading and writing persistent values to flash memory
+ *
+ * MVAL_CALIBRATION, BVAL_CALIBRATION, RVAL_CALIBRATION, CAL_PERFORMED
+ */
+
+void my_fds_evt_handler(fds_evt_t const * const p_fds_evt)
+{
+    switch (p_fds_evt->id)
+    {
+        case FDS_EVT_INIT:
+            if (p_fds_evt->result != FDS_SUCCESS)
+            {
+                NRF_LOG_INFO("ERROR IN EVENT HANDLER\n");
+                NRF_LOG_FLUSH();
+            }
+            break;
+        case FDS_EVT_WRITE:
+            if (p_fds_evt->result == FDS_SUCCESS)
+            {
+                write_flag=1;
+            }
+            break;
+        default:
+            break;
+    }
+}
+
+static void fds_write(float test_value)
+{
+    #define FILE_ID     0x1111
+    #define REC_KEY     0x2222
+    #define DBL_LEN     1
+    fds_record_t       record;
+    fds_record_desc_t  record_desc;
+
+    // Set up record.
+    record.file_id              = FILE_ID;
+    record.key                 = REC_KEY;
+    record.data.p_data         = &test_value;
+    record.data.length_words   = 1;
+                    
+    ret_code_t ret = fds_record_write(&record_desc, &record);
+    if (ret != FDS_SUCCESS)
+    {
+        NRF_LOG_INFO("ERROR WRITING TO FLASH\n");
+    }
+    NRF_LOG_INFO("SUCCESS WRITING TO FLASH\n");
+    NRF_LOG_FLUSH();
+}
+
+static void fds_read(void)
+{
+    #define FILE_ID     0x1111
+    #define REC_KEY     0x2222
+    fds_flash_record_t  flash_record;
+    fds_record_desc_t  record_desc;
+    fds_find_token_t    ftok ={0};//Important, make sure you zero init the ftok token
+    float *data;
+    uint32_t err_code;
+    
+    NRF_LOG_INFO("Start searching... \r\n");
+    // Loop until all records with the given key and file ID have been found.
+    while (fds_record_find(FILE_ID, REC_KEY, &record_desc, &ftok) == FDS_SUCCESS)
+    {
+        err_code = fds_record_open(&record_desc, &flash_record);
+        if ( err_code != FDS_SUCCESS)
+        {
+                NRF_LOG_INFO("COULD NOT FIND OR OPEN RECORD\n");	
+        }
+    
+        NRF_LOG_INFO("Found Record ID = %d\r\n",record_desc.record_id);
+        NRF_LOG_INFO("Data = ");
+        data = (float *) flash_record.p_data;
+        for (uint8_t i=0;i<flash_record.p_header->length_words;i++)
+        {
+                NRF_LOG_INFO("READ VALUE: " NRF_LOG_FLOAT_MARKER "\n", NRF_LOG_FLOAT(*data));
+        }
+        NRF_LOG_INFO("\r\n");
+        // Access the record through the flash_record structure.
+        // Close the record when done.
+        err_code = fds_record_close(&record_desc);
+        if (err_code != FDS_SUCCESS)
+        {
+                NRF_LOG_INFO("ERROR CLOSING RECORD\n");
+        }
+        NRF_LOG_FLUSH();
+    }
+    NRF_LOG_INFO("SUCCESS CLOSING RECORD\n");
+}
+
+static void fds_find_and_delete (void)
+{
+    #define FILE_ID     0x1111
+    #define REC_KEY     0x2222
+    fds_record_desc_t  record_desc;
+    fds_find_token_t    ftok;
+	
+    ftok.page=0;
+    ftok.p_addr=NULL;
+    // Loop and find records with same ID and rec key and mark them as deleted. 
+    while (fds_record_find(FILE_ID, REC_KEY, &record_desc, &ftok) == FDS_SUCCESS)
+    {
+        fds_record_delete(&record_desc);
+        NRF_LOG_INFO("Deleted record ID: %d \r\n",record_desc.record_id);
+    }
+    // call the garbage collector to empty them, don't need to do this all the time, this is just for demonstration
+    ret_code_t ret = fds_gc();
+    if (ret != FDS_SUCCESS)
+    {
+        NRF_LOG_INFO("ERROR DELETING RECORD\n");
+    }
+    NRF_LOG_INFO("RECORD DELETED SUCCESFULLY\n");
+}
+
+static void fds_init_helper(void)
+{	
+    ret_code_t ret = fds_register(my_fds_evt_handler);
+    if (ret != FDS_SUCCESS)
+    {
+        NRF_LOG_INFO("ERROR, COULD NOT REGISTER FDS\n");
+                    
+    }
+    ret = fds_init();
+    if (ret != FDS_SUCCESS)
+    {
+        NRF_LOG_INFO("ERROR, COULD NOT INIT FDS\n");
+    }
+    
+    NRF_LOG_INFO("FDS INIT\n");	
+}
+      
+
 
 /**@brief Application main function.
  */
@@ -1473,7 +1641,7 @@ int main(void)
 
     // Call function very first to turn on the chip
     turn_chip_power_on();
-    // enable_isfet_circuit();
+    enable_isfet_circuit();
 
     log_init();
     timers_init();
@@ -1492,6 +1660,32 @@ int main(void)
     {
         idle_state_handle();
     } 
+
+
+/*
+    Check to see if the calibration data has already been stored
+      Check for all of the data points, if they are not all there then default to false
+      Try checking with fds_stat, if this doesn't work then try fds_open return status
+    If the data has not all been stored in flash, do nothing and continue normally
+    If the data has been stored in flash, read values and set global calibration vars
+
+    Every time a new calibration is performed, update the data stored in flash
+      Write an fds_update function to do this
+      If this does not work, then try to just delete and re-write the record again
+*/
+
+//  fds_stat_t fds_stats1, fds_stats2;
+//  float test_num = 123.456789;
+//  fds_init_helper();
+//  fds_stat(&fds_stats1);
+//  NRF_LOG_INFO("open records: %u, words used: %u\n", fds_stats1.open_records, 
+//                                                     fds_stats1.words_used);
+//  fds_write(test_num);
+//  fds_stat(&fds_stats2);
+//  NRF_LOG_INFO("open records: %u, words used: %u\n", fds_stats2.open_records, 
+//                                                     fds_stats2.words_used);
+//  NRF_LOG_FLUSH();
+
 }
 
 /*
