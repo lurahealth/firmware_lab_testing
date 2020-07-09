@@ -203,7 +203,6 @@ bool     READ_CAL_DATA     = false;
 bool     PT1_READ          = false;
 bool     PT2_READ          = false;
 bool     PT3_READ          = false;
-bool     CAL_PERFORMED     = false;
 double   PT1_PH_VAL        = 0;
 double   PT1_MV_VAL        = 0;
 double   PT2_PH_VAL        = 0;
@@ -211,10 +210,22 @@ double   PT2_MV_VAL        = 0;
 double   PT3_PH_VAL        = 0;
 double   PT3_MV_VAL        = 0;
 int      NUM_CAL_PTS       = 0;
-double   MVAL_CALIBRATION  = 0;
-double   BVAL_CALIBRATION  = 0;
-double   RVAL_CALIBRATION  = 0;
+float     MVAL_CALIBRATION  = 0;
+float     BVAL_CALIBRATION  = 0;
+float     RVAL_CALIBRATION  = 0;
+float     CAL_PERFORMED     = 0;
 static volatile uint8_t write_flag=0;
+
+/* Used for reading/writing calibration values to flash */
+#define MVAL_FILE_ID      0x1110
+#define MVAL_REC_KEY      0x1111
+#define BVAL_FILE_ID      0x2220
+#define BVAL_REC_KEY      0x2221
+#define RVAL_FILE_ID      0x3330
+#define RVAL_REC_KEY      0x3331
+#define CAL_DONE_FILE_ID  0x4440
+#define CAL_DONE_REC_KEY  0x4441
+
 
 
 static const nrf_drv_timer_t   m_timer = NRF_DRV_TIMER_INSTANCE(1);
@@ -234,9 +245,10 @@ void turn_chip_power_on         (void);
 void turn_chip_power_off         (void);
 void restart_saadc              (void);
 void restart_pH_interval_timer  (void);
-double calculate_pH_from_mV     (uint32_t ph_val);
+void write_cal_values_to_flash   (void);
 void linreg                     (int num, double x[], double y[]);
 void perform_calibration        (uint8_t cal_pts);
+double calculate_pH_from_mV     (uint32_t ph_val);
 static void advertising_start   (bool erase_bonds);
 uint32_t saadc_result_to_mv     (uint32_t saadc_result);
 
@@ -264,7 +276,7 @@ void assert_nrf_callback(uint16_t line_num, const uint8_t * p_file_name)
  */
 static void pm_evt_handler(pm_evt_t const * p_evt)
 {
-    NRF_LOG_INFO("ENTERED PM_EVT_HANDLER");
+    //NRF_LOG_INFO("ENTERED PM_EVT_HANDLER\n");
     //NRF_LOG_FLUSH();
     pm_handler_on_pm_evt(p_evt);
     pm_handler_flash_clean(p_evt);
@@ -387,8 +399,8 @@ void read_saadc_for_calibration(void)
       AVG_PH_VAL += saadc_result_to_mv(temp_val);
     }
     AVG_PH_VAL = AVG_PH_VAL / NUM_SAMPLES;
-    NRF_LOG_INFO("averaged avg_ph_val: %u\n");
-    NRF_LOG_FLUSH();
+    //NRF_LOG_INFO("averaged avg_ph_val: %u\n");
+    //NRF_LOG_FLUSH();
     // Assign averaged readings to the correct calibration point
     if(!PT1_READ){
       PT1_MV_VAL = (double)AVG_PH_VAL;
@@ -411,7 +423,7 @@ void reset_calibration_state()
 {
     CAL_MODE        = false;
     READ_CAL_DATA   = false;
-    CAL_PERFORMED   = true;
+    CAL_PERFORMED   = 1.0;
     PT1_READ        = false;
     PT2_READ        = false;
     PT3_READ        = false;
@@ -431,7 +443,10 @@ void perform_calibration(uint8_t cal_pts)
     double incorrect_pH  = calculate_pH_from_mV((uint32_t)PT1_MV_VAL);
     double cal_adjustment = PT1_PH_VAL - incorrect_pH;
     BVAL_CALIBRATION = BVAL_CALIBRATION + cal_adjustment;
-    NRF_LOG_INFO("incorrect: %d, pt1: %d, adjustment: %d, BVAL: %d\n", (int)incorrect_pH, (int)PT1_PH_VAL, (int)cal_adjustment, (int)(BVAL_CALIBRATION));
+    NRF_LOG_INFO("MVAL: " NRF_LOG_FLOAT_MARKER " \n", NRF_LOG_FLOAT(MVAL_CALIBRATION));
+    NRF_LOG_INFO("BVAL: " NRF_LOG_FLOAT_MARKER " \n", NRF_LOG_FLOAT(BVAL_CALIBRATION));
+    NRF_LOG_INFO("RVAL: " NRF_LOG_FLOAT_MARKER " \n", NRF_LOG_FLOAT(RVAL_CALIBRATION));
+    //NRF_LOG_INFO("incorrect: %d, pt1: %d, adjustment: %d, BVAL: %d\n", (int)incorrect_pH, (int)PT1_PH_VAL, (int)cal_adjustment, (int)(BVAL_CALIBRATION));
 
   }
   else if (cal_pts == 2) {
@@ -527,6 +542,7 @@ void check_for_calibration(char **packet)
         // Restart normal data transmision once calibration is complete
         if (NUM_CAL_PTS == 1) {
           perform_calibration(1);
+          write_cal_values_to_flash();
           reset_calibration_state();
           restart_pH_interval_timer();
         }
@@ -542,6 +558,7 @@ void check_for_calibration(char **packet)
         // Restart normal data transmision once calibration is complete
         if (NUM_CAL_PTS == 2) {
           perform_calibration(2);
+          write_cal_values_to_flash();
           reset_calibration_state();
           restart_pH_interval_timer();
         }
@@ -557,6 +574,7 @@ void check_for_calibration(char **packet)
         // Restart normal data transmision once calibration is complete
         if (NUM_CAL_PTS == 3) {
           perform_calibration(3);
+          write_cal_values_to_flash();
           reset_calibration_state();
           restart_pH_interval_timer();
         }    
@@ -1117,7 +1135,7 @@ void create_bluetooth_packet(uint32_t ph_val,
         real_pH = real_pH + 1.0;
         pH_decimal_vals = 0.00;
       }
-      NRF_LOG_INFO("pH decimals: " NRF_LOG_FLOAT_MARKER " \n", NRF_LOG_FLOAT(pH_decimal_vals));
+      //NRF_LOG_INFO("pH decimals: " NRF_LOG_FLOAT_MARKER " \n", NRF_LOG_FLOAT(pH_decimal_vals));
       // If pH is 9.99 or lower, format with 2 decimal places (4 bytes total)
       if (real_pH < 10.0) {
         total_packet[0] = (uint8_t) ((uint8_t)floor(real_pH) + ASCII_DIG_BASE);
@@ -1125,7 +1143,7 @@ void create_bluetooth_packet(uint32_t ph_val,
         total_packet[2] = (uint8_t) (((uint8_t)pH_decimal_vals / 10) + ASCII_DIG_BASE);
         total_packet[3] = (uint8_t) (((uint8_t)pH_decimal_vals % 10) + ASCII_DIG_BASE);
       }
-      // If pH is 10.0 or great, format with 1 decimal place (still 4 bytes total)
+      // If pH is 10.0 or greater, format with 1 decimal place (still 4 bytes total)
       else {
         total_packet[0] = (uint8_t) ((uint8_t)floor(real_pH / 10) + ASCII_DIG_BASE);
         total_packet[1] = (uint8_t) ((uint8_t)floor((uint8_t)real_pH % 10) + ASCII_DIG_BASE);
@@ -1215,23 +1233,22 @@ void saadc_callback(nrf_drv_saadc_evt_t const * p_event)
             }
             //NRF_LOG_INFO("%d\n", p_event->data.done.p_buffer[i]);
         }
-        NRF_LOG_INFO("\n");
-        NRF_LOG_FLUSH();
+
         avg_saadc_reading = avg_saadc_reading/(SAMPLES_IN_BUFFER - 1); 
         // If ph has not been read, read it then restart SAADC to read temp
         if (!PH_IS_READ) {
             AVG_PH_VAL = saadc_result_to_mv(avg_saadc_reading);
             PH_IS_READ = true;
             // Uninit saadc peripheral, restart saadc, enable sampling event
-            NRF_LOG_INFO("read pH val, restarting: %d", AVG_PH_VAL);
-            NRF_LOG_FLUSH();
+            //NRF_LOG_INFO("read pH val, restarting: %d", AVG_PH_VAL);
+            //NRF_LOG_FLUSH();
             restart_saadc();
         } 
         // If pH has been read but not battery, read battery then restart
         else if (!(PH_IS_READ && BATTERY_IS_READ)) {
             AVG_BATT_VAL = saadc_result_to_mv(avg_saadc_reading);
-            NRF_LOG_INFO("read batt val, restarting: %d", AVG_BATT_VAL);
-            NRF_LOG_FLUSH();
+            //NRF_LOG_INFO("read batt val, restarting: %d", AVG_BATT_VAL);
+            //NRF_LOG_FLUSH();
             BATTERY_IS_READ = true;
             restart_saadc();
         }
@@ -1239,11 +1256,11 @@ void saadc_callback(nrf_drv_saadc_evt_t const * p_event)
         // or adjust the calibration points as necessary
         else {
             AVG_TEMP_VAL = saadc_result_to_mv(avg_saadc_reading);
-            NRF_LOG_INFO("read temp val: %d\n", AVG_TEMP_VAL);
-            NRF_LOG_FLUSH();
+            //NRF_LOG_INFO("read temp val: %d\n", AVG_TEMP_VAL);
+            //NRF_LOG_FLUSH();
 
-            NRF_LOG_ERROR( "MVAL: " NRF_LOG_FLOAT_MARKER "\n", NRF_LOG_FLOAT(MVAL_CALIBRATION));
-            NRF_LOG_ERROR( "BVAL: " NRF_LOG_FLOAT_MARKER "\n", NRF_LOG_FLOAT(BVAL_CALIBRATION));
+            //NRF_LOG_ERROR( "MVAL: " NRF_LOG_FLOAT_MARKER "\n", NRF_LOG_FLOAT(MVAL_CALIBRATION));
+            //NRF_LOG_ERROR( "BVAL: " NRF_LOG_FLOAT_MARKER "\n", NRF_LOG_FLOAT(BVAL_CALIBRATION));
           
             // reset global control boolean
             PH_IS_READ = false;
@@ -1262,28 +1279,14 @@ void saadc_callback(nrf_drv_saadc_evt_t const * p_event)
               
 
               // Turn off peripherals
-              NRF_LOG_INFO("BLUETOOTH DATA SENT\n");
-              NRF_LOG_FLUSH();
+              //NRF_LOG_INFO("BLUETOOTH DATA SENT\n");
+              //NRF_LOG_FLUSH();
             }
-//            else if (CAL_MODE && READ_CAL_DATA) {
-//              // do stuff for calibration (maybe don't need to do anything here?)
-//              if(!PT1_READ){
-//                PT1_MV_VAL = (double)AVG_PH_VAL;
-//                PT1_READ = true;
-//              }
-//              else if (PT1_READ && !PT2_READ){
-//                PT2_MV_VAL = (double)AVG_PH_VAL;
-//                PT2_READ = true;
-//              }
-//              else if (PT1_READ && PT2_READ && !PT3_READ){
-//                PT3_MV_VAL = (double)AVG_PH_VAL;
-//                PT3_READ = true;
-//              }
-//            }
+
             disable_pH_voltage_reading();
  
-            NRF_LOG_INFO("SAADC DISABLED\n");
-            NRF_LOG_FLUSH();
+            //NRF_LOG_INFO("SAADC DISABLED\n");
+            //NRF_LOG_FLUSH();
         }
     }
 }
@@ -1325,15 +1328,15 @@ void saadc_init(void)
     nrf_saadc_input_t ANALOG_INPUT;
     // Change pin depending on global control boolean
     if (!PH_IS_READ) {
-        NRF_LOG_INFO("Setting saadc input to AIN2\n");
+        //NRF_LOG_INFO("Setting saadc input to AIN2\n");
         ANALOG_INPUT = NRF_SAADC_INPUT_AIN2;
     }
     else if (!(PH_IS_READ && BATTERY_IS_READ)) {
-        NRF_LOG_INFO("Setting saadc input to AIN3\n");
+        //NRF_LOG_INFO("Setting saadc input to AIN3\n");
         ANALOG_INPUT = NRF_SAADC_INPUT_AIN3;
     }
     else {
-        NRF_LOG_INFO("Setting saadc input to AIN1\n");
+        //NRF_LOG_INFO("Setting saadc input to AIN1\n");
         ANALOG_INPUT = NRF_SAADC_INPUT_AIN1;        
     }
 
@@ -1366,8 +1369,8 @@ void restart_pH_interval_timer(void)
       APP_ERROR_CHECK(err_code);
       nrf_pwr_mgmt_run();
 
-      NRF_LOG_INFO("TIMER RESTARTED (disable_ph_voltage_reading)\n");
-      NRF_LOG_FLUSH();
+      //NRF_LOG_INFO("TIMER RESTARTED (disable_ph_voltage_reading)\n");
+      //NRF_LOG_FLUSH();
 }
 
 /* Function unitializes and disables SAADC sampling, restarts 1 second timer
@@ -1441,7 +1444,7 @@ void gatt_evt_handler(nrf_ble_gatt_t * p_gatt, nrf_ble_gatt_evt_t const * p_evt)
     err_code = app_timer_start(m_timer_id, APP_TIMER_TICKS(DATA_INTERVAL), NULL);
     APP_ERROR_CHECK(err_code);
 
-    NRF_LOG_INFO("TIMER STARTED (gatt_evt_handler) \n");
+    //NRF_LOG_INFO("TIMER STARTED (gatt_evt_handler) \n");
     NRF_LOG_FLUSH();
 
       
@@ -1493,19 +1496,21 @@ void linreg(int num, double x[], double y[])
 
     MVAL_CALIBRATION = (num * sumxy  -  sumx * sumy) / denom;
     BVAL_CALIBRATION = (sumy * sumx2  -  sumx * sumxy) / denom;
-    RVAL_CALIBRATION = (sumxy - sumx * sumy / num) /    /* compute correlation coeff */
+    RVAL_CALIBRATION = (sumxy - sumx * sumy / num) /    
                         sqrt((sumx2 - sqr(sumx)/num) *
                        (sumy2 - sqr(sumy)/num));
+
+    NRF_LOG_INFO("MVAL **CAL**: " NRF_LOG_FLOAT_MARKER "", NRF_LOG_FLOAT(MVAL_CALIBRATION));
+    NRF_LOG_INFO("BVAL **CAL**: " NRF_LOG_FLOAT_MARKER "", NRF_LOG_FLOAT(BVAL_CALIBRATION));
+    NRF_LOG_INFO("RVAL **CAL**: " NRF_LOG_FLOAT_MARKER " \n", NRF_LOG_FLOAT(RVAL_CALIBRATION));
 }
 
-/*
- * Test for reading and writing persistent values to flash memory
- *
- * MVAL_CALIBRATION, BVAL_CALIBRATION, RVAL_CALIBRATION, CAL_PERFORMED
- */
 
 void my_fds_evt_handler(fds_evt_t const * const p_fds_evt)
 {
+    //NRF_LOG_INFO("INSIDE FDS EVENT HANDLER");
+    //NRF_LOG_INFO("    FDS ID: %d, FDS RESULT: %d \n", p_fds_evt->id, p_fds_evt->result);
+    //NRF_LOG_FLUSH();
     switch (p_fds_evt->id)
     {
         case FDS_EVT_INIT:
@@ -1526,19 +1531,28 @@ void my_fds_evt_handler(fds_evt_t const * const p_fds_evt)
     }
 }
 
-static void fds_write(float test_value)
+static void fds_write(float value, uint16_t FILE_ID, uint16_t REC_KEY)
 {
-    #define FILE_ID     0x1111
-    #define REC_KEY     0x2222
-    #define DBL_LEN     1
     fds_record_t       record;
     fds_record_desc_t  record_desc;
 
     // Set up record.
     record.file_id              = FILE_ID;
     record.key                 = REC_KEY;
-    record.data.p_data         = &test_value;
     record.data.length_words   = 1;
+
+    if(FILE_ID == MVAL_FILE_ID && REC_KEY == MVAL_REC_KEY){
+      record.data.p_data = &MVAL_CALIBRATION;
+    }
+    else if(FILE_ID == BVAL_FILE_ID && REC_KEY == BVAL_REC_KEY){
+      record.data.p_data = &BVAL_CALIBRATION;
+    }
+    else if(FILE_ID == RVAL_FILE_ID && REC_KEY == RVAL_REC_KEY){
+      record.data.p_data = &RVAL_CALIBRATION;
+    }
+    else if(FILE_ID == CAL_DONE_FILE_ID && REC_KEY == CAL_DONE_REC_KEY) {
+      record.data.p_data = &CAL_PERFORMED;
+    }
                     
     ret_code_t ret = fds_record_write(&record_desc, &record);
     if (ret != FDS_SUCCESS)
@@ -1549,14 +1563,50 @@ static void fds_write(float test_value)
     NRF_LOG_FLUSH();
 }
 
-static void fds_read(void)
+static void fds_update(float value, uint16_t FILE_ID, uint16_t REC_KEY)
 {
-    #define FILE_ID     0x1111
-    #define REC_KEY     0x2222
+    fds_record_t       record;
+    fds_record_desc_t  record_desc;
+    fds_find_token_t    ftok ={0};
+
+    // Set up record.
+    record.file_id              = FILE_ID;
+    record.key                 = REC_KEY;
+    record.data.length_words   = 1;
+
+    if(FILE_ID == MVAL_FILE_ID && REC_KEY == MVAL_REC_KEY){
+      record.data.p_data = &MVAL_CALIBRATION;
+      fds_record_find(MVAL_FILE_ID, MVAL_REC_KEY, &record_desc, &ftok);
+    }
+    else if(FILE_ID == BVAL_FILE_ID && REC_KEY == BVAL_REC_KEY){
+      record.data.p_data = &BVAL_CALIBRATION;
+      fds_record_find(BVAL_FILE_ID, BVAL_REC_KEY, &record_desc, &ftok);
+    }
+    else if(FILE_ID == RVAL_FILE_ID && REC_KEY == RVAL_REC_KEY){
+      record.data.p_data = &RVAL_CALIBRATION;
+      fds_record_find(RVAL_FILE_ID, RVAL_REC_KEY, &record_desc, &ftok);
+    }
+    else if(FILE_ID == CAL_DONE_FILE_ID && REC_KEY == CAL_DONE_REC_KEY) {
+      record.data.p_data = &CAL_PERFORMED;
+      fds_record_find(CAL_DONE_FILE_ID, CAL_DONE_REC_KEY, &record_desc, &ftok);
+    }
+                    
+    ret_code_t ret = fds_record_update(&record_desc, &record);
+    if (ret != FDS_SUCCESS)
+    {
+        NRF_LOG_INFO("ERROR WRITING UPDATE TO FLASH\n");
+    }
+    NRF_LOG_INFO("SUCCESS WRITING UPDATE TO FLASH\n");
+    NRF_LOG_FLUSH();
+}
+
+float fds_read(uint16_t FILE_ID, uint16_t REC_KEY)
+{
     fds_flash_record_t  flash_record;
     fds_record_desc_t  record_desc;
     fds_find_token_t    ftok ={0};//Important, make sure you zero init the ftok token
-    float *data;
+    float *p_data;
+    float data;
     uint32_t err_code;
     
     NRF_LOG_INFO("Start searching... \r\n");
@@ -1567,14 +1617,14 @@ static void fds_read(void)
         if ( err_code != FDS_SUCCESS)
         {
                 NRF_LOG_INFO("COULD NOT FIND OR OPEN RECORD\n");	
+                return 0.0;
         }
-    
-        NRF_LOG_INFO("Found Record ID = %d\r\n",record_desc.record_id);
-        NRF_LOG_INFO("Data = ");
-        data = (float *) flash_record.p_data;
+
+        p_data = (float *) flash_record.p_data;
+        data = *p_data;
         for (uint8_t i=0;i<flash_record.p_header->length_words;i++)
         {
-                NRF_LOG_INFO("READ VALUE: " NRF_LOG_FLOAT_MARKER "\n", NRF_LOG_FLOAT(*data));
+                NRF_LOG_INFO("Data read: " NRF_LOG_FLOAT_MARKER "\n", NRF_LOG_FLOAT(data));
         }
         NRF_LOG_INFO("\r\n");
         // Access the record through the flash_record structure.
@@ -1587,12 +1637,11 @@ static void fds_read(void)
         NRF_LOG_FLUSH();
     }
     NRF_LOG_INFO("SUCCESS CLOSING RECORD\n");
+    return data;
 }
 
-static void fds_find_and_delete (void)
+static void fds_find_and_delete(uint16_t FILE_ID, uint16_t REC_KEY)
 {
-    #define FILE_ID     0x1111
-    #define REC_KEY     0x2222
     fds_record_desc_t  record_desc;
     fds_find_token_t    ftok;
 	
@@ -1604,7 +1653,8 @@ static void fds_find_and_delete (void)
         fds_record_delete(&record_desc);
         NRF_LOG_INFO("Deleted record ID: %d \r\n",record_desc.record_id);
     }
-    // call the garbage collector to empty them, don't need to do this all the time, this is just for demonstration
+    // call the garbage collector to empty them, don't need to do this all the time, 
+    // this is just for demonstration
     ret_code_t ret = fds_gc();
     if (ret != FDS_SUCCESS)
     {
@@ -1629,6 +1679,53 @@ static void fds_init_helper(void)
     
     NRF_LOG_INFO("FDS INIT\n");	
 }
+
+/* Check words used in fds after initialization, and if more than 4 (default)
+ * words are used then read MVAL, BVAL and RVAL values stored in flash. Assign
+ * stored values to global variables respectively
+ */
+static void check_calibration_state(void)
+{
+    fds_stat_t fds_info;
+    fds_stat(&fds_info);
+    NRF_LOG_INFO("open records: %u, words used: %u\n", fds_info.open_records, 
+                                                       fds_info.words_used);
+    // fds_read will return 0 if the CAL_DONE record does not exist, 
+    // or if the stored value is 0
+    if(fds_read(CAL_DONE_FILE_ID, CAL_DONE_REC_KEY)) {
+      CAL_PERFORMED = 1.0;
+      NRF_LOG_INFO("Setting CAL_PERFORMED to true\n");
+      // Read values stored in flash and set to respective global variables
+      MVAL_CALIBRATION = fds_read(MVAL_FILE_ID, MVAL_REC_KEY);
+      BVAL_CALIBRATION = fds_read(BVAL_FILE_ID, BVAL_REC_KEY);
+      RVAL_CALIBRATION = fds_read(RVAL_FILE_ID, RVAL_REC_KEY);
+      NRF_LOG_INFO("MVAL: " NRF_LOG_FLOAT_MARKER " \n", NRF_LOG_FLOAT(MVAL_CALIBRATION));
+      NRF_LOG_INFO("BVAL: " NRF_LOG_FLOAT_MARKER " \n", NRF_LOG_FLOAT(BVAL_CALIBRATION));
+      NRF_LOG_INFO("RVAL: " NRF_LOG_FLOAT_MARKER " \n", NRF_LOG_FLOAT(RVAL_CALIBRATION));
+    }
+}
+
+/* If calibration has already been performed then update existing records with new 
+ * values. If calibration has not already been performed, then write values to
+ * new records
+ */
+void write_cal_values_to_flash(void) 
+{
+    // Update the existing flash records
+    if (CAL_PERFORMED) {
+        fds_update(MVAL_CALIBRATION, MVAL_FILE_ID,     MVAL_REC_KEY);
+        fds_update(BVAL_CALIBRATION, BVAL_FILE_ID,     BVAL_REC_KEY);
+        fds_update(RVAL_CALIBRATION, RVAL_FILE_ID,     RVAL_REC_KEY);
+        fds_update(CAL_PERFORMED,    CAL_DONE_FILE_ID, CAL_DONE_REC_KEY);
+    }
+    // Write values to new records
+    else {
+        fds_write(MVAL_CALIBRATION, MVAL_FILE_ID,     MVAL_REC_KEY);
+        fds_write(BVAL_CALIBRATION, BVAL_FILE_ID,     BVAL_REC_KEY);
+        fds_write(RVAL_CALIBRATION, RVAL_FILE_ID,     RVAL_REC_KEY);
+        fds_write(CAL_PERFORMED,    CAL_DONE_FILE_ID, CAL_DONE_REC_KEY);
+    }
+}
       
 
 
@@ -1638,14 +1735,18 @@ int main(void)
 {
     bool erase_bonds = false;
 
-
     // Call function very first to turn on the chip
-    turn_chip_power_on();
-    enable_isfet_circuit();
+    //enable_isfet_circuit();
 
     log_init();
     timers_init();
     power_management_init();
+
+    // Initialize fds and check for calibration values
+    fds_init_helper();
+    check_calibration_state();
+
+    // Continue with adjusted calibration state
     ble_stack_init();
     gap_params_init();
     gatt_init();
@@ -1660,32 +1761,6 @@ int main(void)
     {
         idle_state_handle();
     } 
-
-
-/*
-    Check to see if the calibration data has already been stored
-      Check for all of the data points, if they are not all there then default to false
-      Try checking with fds_stat, if this doesn't work then try fds_open return status
-    If the data has not all been stored in flash, do nothing and continue normally
-    If the data has been stored in flash, read values and set global calibration vars
-
-    Every time a new calibration is performed, update the data stored in flash
-      Write an fds_update function to do this
-      If this does not work, then try to just delete and re-write the record again
-*/
-
-//  fds_stat_t fds_stats1, fds_stats2;
-//  float test_num = 123.456789;
-//  fds_init_helper();
-//  fds_stat(&fds_stats1);
-//  NRF_LOG_INFO("open records: %u, words used: %u\n", fds_stats1.open_records, 
-//                                                     fds_stats1.words_used);
-//  fds_write(test_num);
-//  fds_stat(&fds_stats2);
-//  NRF_LOG_INFO("open records: %u, words used: %u\n", fds_stats2.open_records, 
-//                                                     fds_stats2.words_used);
-//  NRF_LOG_FLUSH();
-
 }
 
 /*
