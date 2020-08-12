@@ -117,7 +117,7 @@
 
 #define APP_BLE_CONN_CFG_TAG            1                                           /**< A tag identifying the SoftDevice BLE configuration. */
 
-#define DEVICE_NAME                     "Lura_Health_Test"                   /**< Name of device. Will be included in the advertising data. */
+#define DEVICE_NAME                     "Lura_Test_Dan"                   /**< Name of device. Will be included in the advertising data. */
 #define NUS_SERVICE_UUID_TYPE           BLE_UUID_TYPE_VENDOR_BEGIN                  /**< UUID type for the Nordic UART Service (vendor specific). */
 
 #define APP_BLE_OBSERVER_PRIO           3                                           /**< Application's BLE observer priority. You shouldn't need to modify this value. */
@@ -139,7 +139,7 @@
 #define UART_TX_BUF_SIZE                256                                         /**< UART TX buffer size. */
 #define UART_RX_BUF_SIZE                256                                         /**< UART RX buffer size. */
 
-#define SEC_PARAM_BOND                  1                                           /**< Perform bonding. */
+#define SEC_PARAM_BOND                  0                                           /**< Perform bonding. */
 #define SEC_PARAM_MITM                  0                                           /**< Man In The Middle protection not required. */
 #define SEC_PARAM_LESC                  0                                           /**< LE Secure Connections not enabled. */
 #define SEC_PARAM_KEYPRESS              0                                           /**< Keypress notifications not enabled. */
@@ -150,7 +150,7 @@
 
 #define SAMPLES_IN_BUFFER               50                                          /**< SAADC buffer > */
 
-#define DATA_INTERVAL                   500
+#define DATA_INTERVAL                   1000
 
 
 #define NRF_SAADC_CUSTOM_CHANNEL_CONFIG_SE(PIN_P) \
@@ -235,8 +235,6 @@ static       nrf_ppi_channel_t m_ppi_channel;
 
 // Forward declarations
 void enable_pH_voltage_reading  (void);
-void enable_switch              (void);
-void check_reed_switch          (void);
 void disable_pH_voltage_reading (void);
 void saadc_init                 (void);
 void enable_isfet_circuit       (void);
@@ -251,6 +249,39 @@ void perform_calibration        (uint8_t cal_pts);
 double calculate_pH_from_mV     (uint32_t ph_val);
 static void advertising_start   (bool erase_bonds);
 uint32_t saadc_result_to_mv     (uint32_t saadc_result);
+
+/* 
+ * Buffers for storing data through System ON sleep periods
+ *
+ * Data will be appended to this buffer every time an advertising
+ * timeout occurs. If there is data stored in the buffer when a 
+ * connection is made, a "primer" packet containing total number
+ * of packets (one packet per data set in buffer) will be sent as
+ * one packet, and then the data will be sent in FIFO order. I.E.
+ * buffer[0] will contain the "oldest" data, buffer[n-1] will contain
+ * the "newest" data, and packets will be sent buffer[0] to buffer [n-1]
+ *
+ * Buffers can store five days worth of data. Data is collected once 
+ * every 15 minutes; 96 readings per day * 5 days = 480 readings.
+ * Each reading requires 10 bytes (3x uint16_t, 1x float), so this 
+ * buffer system can store 4.8kB of data.
+ */
+ #define DATA_BUFF_SIZE 480
+ uint16_t ph_mv  [DATA_BUFF_SIZE];
+ uint16_t temp_mv[DATA_BUFF_SIZE];
+ uint16_t batt_mv[DATA_BUFF_SIZE];
+ float     ph_cal [DATA_BUFF_SIZE];
+
+// Function to initialize all buffers with values of 0
+void init_data_buffers(void)
+ {
+    for (int i = 0; i < DATA_BUFF_SIZE; i++) {
+        ph_mv  [i] = 0;
+        temp_mv[i] = 0;
+        batt_mv[i] = 0;
+        ph_cal [i] = 0;
+    }
+ }
 
 
 /**@brief Function for assert macro callback.
@@ -276,7 +307,8 @@ void assert_nrf_callback(uint16_t line_num, const uint8_t * p_file_name)
  */
 static void pm_evt_handler(pm_evt_t const * p_evt)
 {
-    //NRF_LOG_INFO("ENTERED PM_EVT_HANDLER\n");
+    NRF_LOG_INFO("ENTERED PM_EVT_HANDLER");
+    NRF_LOG_INFO("evt id: %u\n", p_evt->evt_id);
     //NRF_LOG_FLUSH();
     pm_handler_on_pm_evt(p_evt);
     pm_handler_flash_clean(p_evt);
@@ -666,6 +698,9 @@ static void on_conn_params_evt(ble_conn_params_evt_t * p_evt)
 {
     uint32_t err_code;
 
+    NRF_LOG_INFO("INSIDE CONN PARAMS EVT");
+    NRF_LOG_INFO("evt type: %u\n", p_evt->evt_type);
+
     if (p_evt->evt_type == BLE_CONN_PARAMS_EVT_FAILED)
     {
         err_code = sd_ble_gap_disconnect(m_conn_handle, 
@@ -755,8 +790,17 @@ static void ble_evt_handler(ble_evt_t const * p_ble_evt, void * p_context)
 {
     uint32_t err_code;
 
+    NRF_LOG_INFO("INSIDE BLE EVT HANDLER\n");
+    NRF_LOG_INFO("evt id: %u\n", p_ble_evt->header.evt_id);
+
     switch (p_ble_evt->header.evt_id)
     {
+        case BLE_GATTS_EVT_SYS_ATTR_MISSING:
+            NRF_LOG_INFO("INSIDE SYS ATTR MISSING");
+            // No system attributes have been stored.
+            err_code = sd_ble_gatts_sys_attr_set(m_conn_handle, NULL, 0, 0);
+            APP_ERROR_CHECK(err_code);
+            break; // BLE_GATTS_EVT_SYS_ATTR_MISSINg
         case BLE_GAP_EVT_CONNECTED:
             m_conn_handle = p_ble_evt->evt.gap_evt.conn_handle;
             err_code = nrf_ble_qwr_conn_handle_assign(&m_qwr, m_conn_handle);
@@ -771,23 +815,24 @@ static void ble_evt_handler(ble_evt_t const * p_ble_evt, void * p_context)
             if(p_ble_evt->evt.gap_evt.params.disconnected.reason  == 
                                                     BLE_HCI_CONNECTION_TIMEOUT)
             {
-                //disconnect_reason is BLE_HCI_CONNECTION_TIMEOUT
                 NRF_LOG_INFO("connection timeout\n");
             }
-            // LED indication will be changed when advertising starts.
             m_conn_handle = BLE_CONN_HANDLE_INVALID;
             CONNECTION_MADE = false;
             NRF_LOG_INFO("DISCONNECTED\n");
             NRF_LOG_FLUSH();
 
-            err_code = app_timer_stop(m_timer_id);
-            APP_ERROR_CHECK(err_code);
             nrfx_timer_uninit(&m_timer);
             nrfx_ppi_channel_free(m_ppi_channel);
             nrfx_saadc_uninit();
+            NRF_SAADC->INTENCLR = (SAADC_INTENCLR_END_Clear << SAADC_INTENCLR_END_Pos);  
+            NVIC_ClearPendingIRQ(SAADC_IRQn);
 
             // *** DISABLE ENABLE ***
             disable_isfet_circuit();
+
+            // restart advertising
+            advertising_start(false);
 
             break;
 
@@ -805,6 +850,7 @@ static void ble_evt_handler(ble_evt_t const * p_ble_evt, void * p_context)
         } break;
 
         case BLE_GATTC_EVT_TIMEOUT:
+            NRF_LOG_INFO("ble gattc evt timeout");
             // Disconnect on GATT Client timeout event.
             err_code = 
                 sd_ble_gap_disconnect(p_ble_evt->evt.gattc_evt.conn_handle,
@@ -890,10 +936,10 @@ static void peer_manager_init(void)
     sec_param.oob            = SEC_PARAM_OOB;
     sec_param.min_key_size   = SEC_PARAM_MIN_KEY_SIZE;
     sec_param.max_key_size   = SEC_PARAM_MAX_KEY_SIZE;
-    sec_param.kdist_own.enc  = 1;
-    sec_param.kdist_own.id   = 1;
-    sec_param.kdist_peer.enc = 1;
-    sec_param.kdist_peer.id  = 1;
+    sec_param.kdist_own.enc  = 0;
+    sec_param.kdist_own.id   = 0;
+    sec_param.kdist_peer.enc = 0;
+    sec_param.kdist_peer.id  = 0;
 
     err_code = pm_sec_params_set(&sec_param);
     APP_ERROR_CHECK(err_code);
@@ -1087,6 +1133,7 @@ void restart_saadc(void)
     nrfx_timer_uninit(&m_timer);
     nrfx_ppi_channel_free(m_ppi_channel);
     nrfx_saadc_uninit();
+    NVIC_ClearPendingIRQ(SAADC_IRQn);
     while(nrfx_saadc_is_busy()) {
         // make sure SAADC is not busy
     }
@@ -1279,7 +1326,7 @@ void saadc_callback(nrf_drv_saadc_evt_t const * p_event)
               
 
               // Turn off peripherals
-              //NRF_LOG_INFO("BLUETOOTH DATA SENT\n");
+              NRF_LOG_INFO("BLUETOOTH DATA SENT\n");
               //NRF_LOG_FLUSH();
             }
 
@@ -1289,6 +1336,68 @@ void saadc_callback(nrf_drv_saadc_evt_t const * p_event)
             //NRF_LOG_FLUSH();
         }
     }
+}
+
+// Read saadc values for temperature, battery level, and pH using blocking
+void read_saadc_for_regular_protocol(void) 
+{
+    uint16_t   total_size = 20;
+    uint32_t   avg_saadc_reading = 0;
+    // Byte array to store total packet
+    uint8_t total_packet[] = {48,48,48,48,44,    /* real pH value, comma */
+                              48,48,48,48,44,    /* Temperature, comma */
+                              48,48,48,48,44,    /* Battery value, comma */
+                              48,48,48,48,10};   /* raw pH value, EOL */
+    int NUM_SAMPLES = 30;
+    nrf_saadc_value_t temp_val = 0;
+    ret_code_t err_code;
+    uint32_t AVG_MV_VAL = 0;
+
+    for (int i = 0; i < NUM_SAMPLES; i++) {
+      err_code = nrfx_saadc_sample_convert(0, &temp_val);
+      APP_ERROR_CHECK(err_code);
+      AVG_MV_VAL += saadc_result_to_mv(temp_val);
+      nrf_delay_us(5);
+    }
+    AVG_MV_VAL = AVG_MV_VAL / NUM_SAMPLES;
+    // Assign averaged readings to the correct calibration point
+    if(!PH_IS_READ){
+      AVG_PH_VAL = AVG_MV_VAL;
+      NRF_LOG_INFO("read pH val, restarting: %d", AVG_PH_VAL);
+      NRF_LOG_FLUSH();
+      PH_IS_READ = true;
+      restart_saadc();
+    }
+    else if (!(PH_IS_READ && BATTERY_IS_READ)){
+      AVG_BATT_VAL = AVG_MV_VAL;
+      NRF_LOG_INFO("read batt val, restarting: %d", AVG_BATT_VAL);
+      NRF_LOG_FLUSH();
+      BATTERY_IS_READ = true;
+      restart_saadc();
+    }
+    else {
+       AVG_TEMP_VAL = AVG_MV_VAL;
+       NRF_LOG_INFO("read temp val, restarting: %d", AVG_TEMP_VAL);
+       NRF_LOG_FLUSH();
+       PH_IS_READ = false;
+       BATTERY_IS_READ = false;
+       if (!CAL_MODE) {
+            // Create bluetooth data
+            create_bluetooth_packet(AVG_PH_VAL, AVG_BATT_VAL, 
+                                    AVG_TEMP_VAL, total_packet);
+
+            // Send data
+            err_code = ble_nus_data_send(&m_nus, total_packet, 
+                                         &total_size, m_conn_handle);
+            //APP_ERROR_CHECK(err_code);
+              
+
+            // Turn off peripherals
+            NRF_LOG_INFO("BLUETOOTH DATA SENT\n");
+            //NRF_LOG_FLUSH();
+       }
+       disable_pH_voltage_reading();
+    }    
 }
 
 
@@ -1343,9 +1452,9 @@ void saadc_init(void)
     nrf_saadc_channel_config_t channel_config =
             NRF_SAADC_CUSTOM_CHANNEL_CONFIG_SE(ANALOG_INPUT);
     
-    if (!CAL_MODE)
-      init_saadc_for_buffer_conversion(channel_config);
-    else 
+//    if (!CAL_MODE)
+//      init_saadc_for_buffer_conversion(channel_config);
+//    else 
       init_saadc_for_blocking_sample_conversion(channel_config);
 }
 
@@ -1355,11 +1464,12 @@ void saadc_init(void)
 void enable_pH_voltage_reading(void)
 {
     saadc_init();
-    if (!CAL_MODE) {
-      saadc_sampling_event_init();
-      saadc_sampling_event_enable();
-    }
-    nrf_pwr_mgmt_run();
+//    if (!CAL_MODE) {
+//      saadc_sampling_event_init();
+//      saadc_sampling_event_enable();
+//    }
+//    nrf_pwr_mgmt_run();
+    read_saadc_for_regular_protocol();
 }
 
 void restart_pH_interval_timer(void)
@@ -1380,6 +1490,7 @@ void disable_pH_voltage_reading(void)
     nrfx_timer_uninit(&m_timer);
     nrfx_ppi_channel_free(m_ppi_channel);
     nrfx_saadc_uninit();
+    NVIC_ClearPendingIRQ(SAADC_IRQn);
     while(nrfx_saadc_is_busy()) {
         // make sure SAADC is not busy
     }
@@ -1434,11 +1545,7 @@ void gatt_evt_handler(nrf_ble_gatt_t * p_gatt, nrf_ble_gatt_evt_t const * p_evt)
 
     ret_code_t err_code;
 
-    // Create application timer
-    err_code = app_timer_create(&m_timer_id,
-                                APP_TIMER_MODE_SINGLE_SHOT,
-                                single_shot_timer_handler);
-    APP_ERROR_CHECK(err_code);
+
         
     // 1 second timer intervals
     err_code = app_timer_start(m_timer_id, APP_TIMER_TICKS(DATA_INTERVAL), NULL);
@@ -1508,9 +1615,6 @@ void linreg(int num, double x[], double y[])
 
 void my_fds_evt_handler(fds_evt_t const * const p_fds_evt)
 {
-    //NRF_LOG_INFO("INSIDE FDS EVENT HANDLER");
-    //NRF_LOG_INFO("    FDS ID: %d, FDS RESULT: %d \n", p_fds_evt->id, p_fds_evt->result);
-    //NRF_LOG_FLUSH();
     switch (p_fds_evt->id)
     {
         case FDS_EVT_INIT:
@@ -1734,9 +1838,11 @@ void write_cal_values_to_flash(void)
 int main(void)
 {
     bool erase_bonds = false;
+    uint32_t err_code;
 
     // Call function very first to turn on the chip
-    //enable_isfet_circuit();
+    turn_chip_power_on();
+    enable_isfet_circuit();
 
     log_init();
     timers_init();
@@ -1754,6 +1860,12 @@ int main(void)
     advertising_init();
     conn_params_init();
     peer_manager_init();
+
+    // Create application timer and begin advertising
+    err_code = app_timer_create(&m_timer_id,
+                                APP_TIMER_MODE_SINGLE_SHOT,
+                                single_shot_timer_handler);
+    APP_ERROR_CHECK(err_code);
     advertising_start(erase_bonds);
 
     // Enter main loop.
