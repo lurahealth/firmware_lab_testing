@@ -117,7 +117,7 @@
 
 #define APP_BLE_CONN_CFG_TAG            1                                           /**< A tag identifying the SoftDevice BLE configuration. */
 
-#define DEVICE_NAME                     "Lura_Test_Dan"                   /**< Name of device. Will be included in the advertising data. */
+#define DEVICE_NAME                     "Lura_Test"                   /**< Name of device. Will be included in the advertising data. */
 #define NUS_SERVICE_UUID_TYPE           BLE_UUID_TYPE_VENDOR_BEGIN                  /**< UUID type for the Nordic UART Service (vendor specific). */
 
 #define APP_BLE_OBSERVER_PRIO           3                                           /**< Application's BLE observer priority. You shouldn't need to modify this value. */
@@ -150,7 +150,7 @@
 
 #define SAMPLES_IN_BUFFER               50                                          /**< SAADC buffer > */
 
-#define DATA_INTERVAL                   1000
+#define DATA_INTERVAL                   10
 
 
 #define NRF_SAADC_CUSTOM_CHANNEL_CONFIG_SE(PIN_P) \
@@ -633,7 +633,7 @@ void nus_data_handler(ble_nus_evt_t * p_evt)
         char *data_ptr = data;
         uint32_t err_code;
 
-        NRF_LOG_DEBUG("Received data from BLE NUS.\n");
+        NRF_LOG_INFO("Received data from BLE NUS.\n");
         NRF_LOG_HEXDUMP_DEBUG(p_evt->params.rx_data.p_data, 
                                             p_evt->params.rx_data.length);
 
@@ -1348,7 +1348,7 @@ void read_saadc_for_regular_protocol(void)
                               48,48,48,48,44,    /* Temperature, comma */
                               48,48,48,48,44,    /* Battery value, comma */
                               48,48,48,48,10};   /* raw pH value, EOL */
-    int NUM_SAMPLES = 30;
+    int NUM_SAMPLES = 100;
     nrf_saadc_value_t temp_val = 0;
     ret_code_t err_code;
     uint32_t AVG_MV_VAL = 0;
@@ -1357,7 +1357,7 @@ void read_saadc_for_regular_protocol(void)
       err_code = nrfx_saadc_sample_convert(0, &temp_val);
       APP_ERROR_CHECK(err_code);
       AVG_MV_VAL += saadc_result_to_mv(temp_val);
-      nrf_delay_us(5);
+      nrf_delay_us(15);
     }
     AVG_MV_VAL = AVG_MV_VAL / NUM_SAMPLES;
     // Assign averaged readings to the correct calibration point
