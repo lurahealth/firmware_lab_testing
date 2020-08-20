@@ -421,8 +421,8 @@ void read_saadc_for_calibration(void)
     READ_CAL_DATA = true;
     PH_IS_READ = false;
     // Make sure isfet circuit is enabled for saadc readings
-    enable_isfet_circuit();
-    nrf_delay_ms(10);
+//    enable_isfet_circuit();
+//    nrf_delay_ms(10);
     // Take saadc readings for pH, temp and battery
     enable_pH_voltage_reading();
     for (int i = 0; i < NUM_SAMPLES; i++) {
@@ -1469,7 +1469,8 @@ void enable_pH_voltage_reading(void)
 //      saadc_sampling_event_enable();
 //    }
 //    nrf_pwr_mgmt_run();
-    read_saadc_for_regular_protocol();
+    if (!CAL_MODE)
+        read_saadc_for_regular_protocol();
 }
 
 void restart_pH_interval_timer(void)
