@@ -150,7 +150,7 @@
 
 #define SAMPLES_IN_BUFFER               50                                          /**< SAADC buffer > */
 
-#define DATA_INTERVAL                   10
+#define DATA_INTERVAL                   1000
 
 
 #define NRF_SAADC_CUSTOM_CHANNEL_CONFIG_SE(PIN_P) \
@@ -822,8 +822,8 @@ static void ble_evt_handler(ble_evt_t const * p_ble_evt, void * p_context)
             NRF_LOG_INFO("DISCONNECTED\n");
             NRF_LOG_FLUSH();
 
-            nrfx_timer_uninit(&m_timer);
-            nrfx_ppi_channel_free(m_ppi_channel);
+//            nrfx_timer_uninit(&m_timer);
+//            nrfx_ppi_channel_free(m_ppi_channel);
             nrfx_saadc_uninit();
             NRF_SAADC->INTENCLR = (SAADC_INTENCLR_END_Clear << SAADC_INTENCLR_END_Pos);  
             NVIC_ClearPendingIRQ(SAADC_IRQn);
@@ -1130,8 +1130,8 @@ void saadc_sampling_event_enable(void)
 
 void restart_saadc(void)
 {
-    nrfx_timer_uninit(&m_timer);
-    nrfx_ppi_channel_free(m_ppi_channel);
+//    nrfx_timer_uninit(&m_timer);
+//    nrfx_ppi_channel_free(m_ppi_channel);
     nrfx_saadc_uninit();
     NVIC_ClearPendingIRQ(SAADC_IRQn);
     while(nrfx_saadc_is_busy()) {
@@ -1487,8 +1487,8 @@ void restart_pH_interval_timer(void)
  */
 void disable_pH_voltage_reading(void)
 {
-    nrfx_timer_uninit(&m_timer);
-    nrfx_ppi_channel_free(m_ppi_channel);
+//    nrfx_timer_uninit(&m_timer);
+//    nrfx_ppi_channel_free(m_ppi_channel);
     nrfx_saadc_uninit();
     NVIC_ClearPendingIRQ(SAADC_IRQn);
     while(nrfx_saadc_is_busy()) {
@@ -1496,7 +1496,7 @@ void disable_pH_voltage_reading(void)
     }
 
     // *** DISABLE ENABLE ***
-    //disable_isfet_circuit();
+    disable_isfet_circuit();
 
     if (!CAL_MODE) {
       // Restart timer
@@ -1842,7 +1842,7 @@ int main(void)
 
     // Call function very first to turn on the chip
     turn_chip_power_on();
-    enable_isfet_circuit();
+    //enable_isfet_circuit();
 
     log_init();
     timers_init();
