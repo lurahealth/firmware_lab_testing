@@ -240,49 +240,74 @@ void saadc_init                 (void);
 void enable_isfet_circuit       (void);
 void disable_isfet_circuit      (void);
 void turn_chip_power_on         (void);
-void turn_chip_power_off         (void);
+void turn_chip_power_off        (void);
 void restart_saadc              (void);
 void restart_pH_interval_timer  (void);
-void write_cal_values_to_flash   (void);
+void write_cal_values_to_flash  (void);
 void linreg                     (int num, double x[], double y[]);
 void perform_calibration        (uint8_t cal_pts);
 double calculate_pH_from_mV     (uint32_t ph_val);
+double calculate_celsius_from_mv(uint32_t mv);
 static void advertising_start   (bool erase_bonds);
 uint32_t saadc_result_to_mv     (uint32_t saadc_result);
 
-/* 
- * Buffers for storing data through System ON sleep periods
- *
- * Data will be appended to this buffer every time an advertising
- * timeout occurs. If there is data stored in the buffer when a 
- * connection is made, a "primer" packet containing total number
- * of packets (one packet per data set in buffer) will be sent as
- * one packet, and then the data will be sent in FIFO order. I.E.
- * buffer[0] will contain the "oldest" data, buffer[n-1] will contain
- * the "newest" data, and packets will be sent buffer[0] to buffer [n-1]
- *
- * Buffers can store five days worth of data. Data is collected once 
- * every 15 minutes; 96 readings per day * 5 days = 480 readings.
- * Each reading requires 10 bytes (3x uint16_t, 1x float), so this 
- * buffer system can store 4.8kB of data.
+/*
+ * Functions for translating from temperature sensor millivolt output 
+ * to real-world temperature values. The thermistor resistance should first
+ * be calculated from the temperature millivolt reading. Then, A simplified 
+ * version of the Steinhart and Hart equation can be used to calculate 
+ * Kelvins. Data is sent in Celsius for ease of debugging (data sheet values
+ * are listed in Celsius), and the mobile application may convert to Fahrenheit
  */
- #define DATA_BUFF_SIZE 480
- uint16_t ph_mv  [DATA_BUFF_SIZE];
- uint16_t temp_mv[DATA_BUFF_SIZE];
- uint16_t batt_mv[DATA_BUFF_SIZE];
- float     ph_cal [DATA_BUFF_SIZE];
 
-// Function to initialize all buffers with values of 0
-void init_data_buffers(void)
- {
-    for (int i = 0; i < DATA_BUFF_SIZE; i++) {
-        ph_mv  [i] = 0;
-        temp_mv[i] = 0;
-        batt_mv[i] = 0;
-        ph_cal [i] = 0;
-    }
- }
+// Helper function to convert millivolts to thermistor resistance
+double mv_to_therm_resistance(uint32_t mv)
+{
+    double therm_res = 0;
+    double Vtemp     = 0;
+    double R1        = 10000.0;
+    double Vin       = 1800;
 
+    Vtemp = (double) mv;
+    therm_res = (Vtemp * R1) / (Vin - Vtemp);
+
+    return therm_res;
+}
+
+// Helper function to convert thermistor resistance to Kelvins
+double therm_resistance_to_kelvins(double therm_res)
+{
+    double kelvins_constant = 273.15;
+    double ref_temp         = 25.0 + kelvins_constant;
+    double ref_resistance   = 10000.0;
+    double beta_constant    = 3380.0;
+    double real_kelvins     = 0;
+
+    real_kelvins = (beta_constant * ref_temp) / 
+                      (beta_constant + (ref_temp * log(therm_res/ref_resistance)));
+
+    return real_kelvins;
+}
+
+// Helper function to convert Kelvins to Celsius
+double kelvins_to_celsius(double kelvins)
+{
+    double kelvins_constant = 273.15;
+    return kelvins - kelvins_constant;
+}
+
+// Function to fully convert temperature millivolt output to degrees celsius
+double calculate_celsius_from_mv(uint32_t mv)
+{
+    double therm_res = 0;
+    double kelvins   = 0;
+    double celsius   = 0;
+    therm_res = mv_to_therm_resistance(mv);
+    kelvins   = therm_resistance_to_kelvins(therm_res);
+    celsius   = kelvins_to_celsius(kelvins);
+
+    return celsius;
+}
 
 /**@brief Function for assert macro callback.
  *
