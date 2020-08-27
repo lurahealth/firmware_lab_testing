@@ -189,6 +189,7 @@ static ble_uuid_t m_adv_uuids[]          =                                      
 /* Lura Health nRF52810 port assignments */
 #define ENABLE_ISFET_PIN 8
 #define CHIP_POWER_PIN   12
+#define HW_TIMEOUT 10000
 
 /* GLOBALS */
 uint32_t AVG_PH_VAL        = 0;
@@ -305,6 +306,14 @@ double calculate_celsius_from_mv(uint32_t mv)
     therm_res = mv_to_therm_resistance(mv);
     kelvins   = therm_resistance_to_kelvins(therm_res);
     celsius   = kelvins_to_celsius(kelvins);
+
+    // Round celsius to nearest 0.1
+    celsius = celsius * 100.0;
+    if ((uint32_t)celsius % 10 > 5)
+        celsius = celsius + 10.0;
+    celsius = celsius / 10.0;
+    celsius = round(celsius);
+    celsius = celsius / 10.0 + 0.000000001; // Workaround for floating point error
 
     return celsius;
 }
@@ -1171,31 +1180,18 @@ double calculate_pH_from_mV(uint32_t ph_val)
     return ((double)ph_val * MVAL_CALIBRATION) + BVAL_CALIBRATION;
 }
 
-// Pack integer values into byte array to send via bluetooth
-void create_bluetooth_packet(uint32_t ph_val,
-                             uint32_t batt_val,        
-                             uint32_t temp_val, 
-                             uint8_t* total_packet)
+// Packs calibrated pH value into total_packet[0-3], rounded to nearest 0.25 pH
+void pack_calibrated_ph_val(uint32_t ph_val, uint8_t* total_packet)
 {
-    /*
-      {0,0,0,0,44,    pH value arr[0-3], comma arr[4]
-       0,0,0,0,44,    temperature arr[5-8], comma arr[9]
-       0,0,0,0,44,    battery value arr[10-13], commar arr[14]
-       0 0 0 0,10};   raw pH value arr[15-18], EOL arr[19]
-    */
-
-    uint32_t temp = 0;    // hold intermediate divisions of variables
     uint32_t ASCII_DIG_BASE = 48;
-
     // If calibration has not been performed, store 0000 in real pH field [0-3],
     // and store the raw SAADC data in the last field [15-18]
     if (!CAL_PERFORMED) {
-      temp = ph_val;
       for(int i = 3; i >= 0; i--){
         total_packet[i] = 0 + ASCII_DIG_BASE;
       }
     }
-    // If calibration has been performed, store eal pH in [0-3],
+    // If calibration has been performed, store real pH in [0-3],
     // and store the raw millivolt data in the last field [15-18]
     else if (CAL_PERFORMED) {
       double real_pH  = calculate_pH_from_mV(ph_val);
@@ -1207,7 +1203,6 @@ void create_bluetooth_packet(uint32_t ph_val,
         real_pH = real_pH + 1.0;
         pH_decimal_vals = 0.00;
       }
-      //NRF_LOG_INFO("pH decimals: " NRF_LOG_FLOAT_MARKER " \n", NRF_LOG_FLOAT(pH_decimal_vals));
       // If pH is 9.99 or lower, format with 2 decimal places (4 bytes total)
       if (real_pH < 10.0) {
         total_packet[0] = (uint8_t) ((uint8_t)floor(real_pH) + ASCII_DIG_BASE);
@@ -1223,20 +1218,29 @@ void create_bluetooth_packet(uint32_t ph_val,
         total_packet[3] = (uint8_t) (((uint8_t)pH_decimal_vals / 10) + ASCII_DIG_BASE);
       }
     }
-    // Pack temp_val into appropriate location
+}
+
+// Packs temperature value into total_packet[5-8], as degrees Celsius
+void pack_temperature_val(uint32_t temp_val, uint8_t* total_packet)
+{
+    uint32_t ASCII_DIG_BASE = 48;
+    double real_temp = calculate_celsius_from_mv(temp_val);
+    NRF_LOG_INFO("temp celsius: " NRF_LOG_FLOAT_MARKER " \n", NRF_LOG_FLOAT(real_temp));
+    double temp_decimal_vals = (real_temp - floor(real_temp)) * 100;
+    total_packet[5] = (uint8_t) ((uint8_t)floor(real_temp / 10) + ASCII_DIG_BASE);
+    total_packet[6] = (uint8_t) ((uint8_t)floor((uint8_t)real_temp % 10) + ASCII_DIG_BASE);
+    total_packet[7] = 46;
+    total_packet[8] = (uint8_t) (((uint8_t)temp_decimal_vals / 10) + ASCII_DIG_BASE);
+
+}
+
+// Packs battery value into total_packet[10-13], as millivolts
+void pack_battery_val(uint32_t batt_val, uint8_t* total_packet)
+{
+    uint32_t ASCII_DIG_BASE = 48;
+    uint32_t temp = 0;            // hold intermediate divisions of variables
     // Packing protocol for number abcd: 
-    //  [... 0, 0, 0, d] --> [... 0, 0, c, d] --> [... 0, b, c, d] --> [... a, b, c, d]
-    temp = temp_val;
-    for(int i = 8; i >= 5; i--){
-        if (i == 8) total_packet[i] = (uint8_t)(temp % 10 + ASCII_DIG_BASE);
-        else {
-            temp = temp / 10;
-            total_packet[i] = (uint8_t)(temp % 10 + ASCII_DIG_BASE);
-        }
-    }
-    // Pack batt_val into appropriate location
-    // Packing protocol for number abcd: 
-    //  [... 0, 0, 0, d] --> [... 0, 0, c, d] --> [... 0, b, c, d] --> [... a, b, c, d]
+    //  [... 0, 0, 0, d] --> [... 0, 0, c, d] --> ... --> [... a, b, c, d]
     temp = batt_val;
     for(int i = 13; i >= 10; i--){
         if (i == 13) total_packet[i] = (uint8_t)(temp % 10 + ASCII_DIG_BASE);
@@ -1245,9 +1249,15 @@ void create_bluetooth_packet(uint32_t ph_val,
             total_packet[i] = (uint8_t)(temp % 10 + ASCII_DIG_BASE);
         }
     }
-    // Pack batt_val into appropriate location
+}
+
+// Packs uncalibrated pH value into total_packet[15-18], as millivolts
+void pack_uncalibrated_ph_val(uint32_t ph_val, uint8_t* total_packet)
+{
+    uint32_t ASCII_DIG_BASE = 48;
+    uint32_t temp = 0;            // hold intermediate divisions of variables
     // Packing protocol for number abcd: 
-    //  [... 0, 0, 0, d] --> [... 0, 0, c, d] --> [... 0, b, c, d] --> [... a, b, c, d]
+    //  [... 0, 0, 0, d] --> [... 0, 0, c, d] --> ... --> [... a, b, c, d]
     temp = ph_val;
     for(int i = 18; i >= 15; i--){
         if (i == 18) total_packet[i] = (uint8_t)(temp % 10 + ASCII_DIG_BASE);
@@ -1256,6 +1266,25 @@ void create_bluetooth_packet(uint32_t ph_val,
             total_packet[i] = (uint8_t)(temp % 10 + ASCII_DIG_BASE);
         }
     }
+}
+
+// Pack values into byte array to send via bluetooth
+void create_bluetooth_packet(uint32_t ph_val,
+                             uint32_t batt_val,        
+                             uint32_t temp_val, 
+                             uint8_t* total_packet)
+{
+    /*
+        {0,0,0,0,44,    calibrated pH value arr[0-3], comma arr[4]
+         0,0,0,0,44,    temperature arr[5-8], comma arr[9]
+         0,0,0,0,44,    battery value arr[10-13], commar arr[14]
+         0 0 0 0,10};   raw pH value arr[15-18], EOL arr[19]
+    */
+      
+    pack_calibrated_ph_val(ph_val, total_packet);
+    pack_temperature_val(temp_val, total_packet);
+    pack_battery_val(batt_val, total_packet);
+    pack_uncalibrated_ph_val(ph_val, total_packet);   
 }
 
 uint32_t saadc_result_to_mv(uint32_t saadc_result)
@@ -1373,7 +1402,7 @@ void read_saadc_for_regular_protocol(void)
                               48,48,48,48,44,    /* Temperature, comma */
                               48,48,48,48,44,    /* Battery value, comma */
                               48,48,48,48,10};   /* raw pH value, EOL */
-    int NUM_SAMPLES = 100;
+    int NUM_SAMPLES = 150;
     nrf_saadc_value_t temp_val = 0;
     ret_code_t err_code;
     uint32_t AVG_MV_VAL = 0;
@@ -1382,7 +1411,6 @@ void read_saadc_for_regular_protocol(void)
       err_code = nrfx_saadc_sample_convert(0, &temp_val);
       APP_ERROR_CHECK(err_code);
       AVG_MV_VAL += saadc_result_to_mv(temp_val);
-      nrf_delay_us(15);
     }
     AVG_MV_VAL = AVG_MV_VAL / NUM_SAMPLES;
     // Assign averaged readings to the correct calibration point
@@ -1403,7 +1431,6 @@ void read_saadc_for_regular_protocol(void)
     else {
        AVG_TEMP_VAL = AVG_MV_VAL;
        NRF_LOG_INFO("read temp val, restarting: %d", AVG_TEMP_VAL);
-       NRF_LOG_FLUSH();
        PH_IS_READ = false;
        BATTERY_IS_READ = false;
        if (!CAL_MODE) {
@@ -1504,17 +1531,12 @@ void restart_pH_interval_timer(void)
       err_code = app_timer_start(m_timer_id, APP_TIMER_TICKS(DATA_INTERVAL), NULL);
       APP_ERROR_CHECK(err_code);
       nrf_pwr_mgmt_run();
-
-      //NRF_LOG_INFO("TIMER RESTARTED (disable_ph_voltage_reading)\n");
-      //NRF_LOG_FLUSH();
 }
 
 /* Function unitializes and disables SAADC sampling, restarts 1 second timer
  */
 void disable_pH_voltage_reading(void)
 {
-//    nrfx_timer_uninit(&m_timer);
-//    nrfx_ppi_channel_free(m_ppi_channel);
     nrfx_saadc_uninit();
     NVIC_ClearPendingIRQ(SAADC_IRQn);
     while(nrfx_saadc_is_busy()) {
@@ -1571,13 +1593,9 @@ void gatt_evt_handler(nrf_ble_gatt_t * p_gatt, nrf_ble_gatt_evt_t const * p_evt)
 
     ret_code_t err_code;
 
-
-        
-    // 1 second timer intervals
     err_code = app_timer_start(m_timer_id, APP_TIMER_TICKS(DATA_INTERVAL), NULL);
     APP_ERROR_CHECK(err_code);
 
-    //NRF_LOG_INFO("TIMER STARTED (gatt_evt_handler) \n");
     NRF_LOG_FLUSH();
 
       

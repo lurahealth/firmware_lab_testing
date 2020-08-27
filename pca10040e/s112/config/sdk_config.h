@@ -2828,7 +2828,7 @@
 // <7=> 7
 
 #ifndef NRFX_SAADC_CONFIG_IRQ_PRIORITY
-#define NRFX_SAADC_CONFIG_IRQ_PRIORITY 6
+#define NRFX_SAADC_CONFIG_IRQ_PRIORITY 3
 #endif
 
 // <e> NRFX_SAADC_CONFIG_LOG_ENABLED - Enables logging in the module.
@@ -4336,7 +4336,7 @@
 // <7=> 7
 
 #ifndef SAADC_CONFIG_IRQ_PRIORITY
-#define SAADC_CONFIG_IRQ_PRIORITY 6
+#define SAADC_CONFIG_IRQ_PRIORITY 3
 #endif
 
 // </e>
