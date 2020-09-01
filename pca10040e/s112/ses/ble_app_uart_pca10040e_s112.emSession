@@ -62,7 +62,7 @@
   <Watches active="0" update="Never"/>
  </Watch4>
  <Files>
-  <SessionOpenFile windowGroup="DockEditLeft" x="30" y="236" useTextEdit="1" useBinaryEdit="0" left="0" path="../../../main.c" selected="0" top="292" codecName="Default"/>
+  <SessionOpenFile windowGroup="DockEditLeft" x="0" y="352" useTextEdit="1" useBinaryEdit="0" left="0" path="../../../main.c" selected="1" top="265" codecName="Default"/>
   <SessionOpenFile windowGroup="DockEditLeft" x="0" y="99" useTextEdit="1" useBinaryEdit="0" left="0" path="../../../../../../components/libraries/util/app_error_weak.c" selected="0" top="71" codecName="Default"/>
   <SessionOpenFile windowGroup="DockEditLeft" x="0" y="41" useTextEdit="1" useBinaryEdit="0" left="0" path="../../../../../../components/libraries/timer/app_timer.c" selected="0" top="30" codecName="Default"/>
   <SessionOpenFile windowGroup="DockEditLeft" x="0" y="430" useTextEdit="1" useBinaryEdit="0" left="0" path="../../../../../../modules/nrfx/hal/nrf_uarte.h" selected="0" top="420" codecName="Default"/>
@@ -79,8 +79,8 @@
   <SessionOpenFile windowGroup="DockEditLeft" x="0" y="66" useTextEdit="1" useBinaryEdit="0" left="0" path="../../../../../../components/softdevice/s112/headers/ble_gatt.h" selected="0" top="41" codecName="Default"/>
   <SessionOpenFile windowGroup="DockEditLeft" x="0" y="614" useTextEdit="1" useBinaryEdit="0" left="0" path="../../../../../../components/ble/peer_manager/gatt_cache_manager.c" selected="0" top="587" codecName="Default"/>
   <SessionOpenFile windowGroup="DockEditLeft" x="0" y="41" useTextEdit="1" useBinaryEdit="0" left="0" path="../../../../../../components/libraries/fds/fds.c" selected="0" top="20" codecName="Default"/>
-  <SessionOpenFile windowGroup="DockEditLeft" x="0" y="196" useTextEdit="1" useBinaryEdit="0" left="0" path="../../../../../../components/softdevice/s112/headers/ble_gatts.h" selected="1" top="172" codecName="Default"/>
-  <SessionOpenFile windowGroup="DockRightTop" x="31" y="9253" useTextEdit="1" useBinaryEdit="0" left="0" path="../config/sdk_config.h" selected="0" top="9235" codecName="Default"/>
+  <SessionOpenFile windowGroup="DockEditLeft" x="0" y="196" useTextEdit="1" useBinaryEdit="0" left="0" path="../../../../../../components/softdevice/s112/headers/ble_gatts.h" selected="0" top="172" codecName="Default"/>
+  <SessionOpenFile windowGroup="DockRightTop" x="0" y="9253" useTextEdit="1" useBinaryEdit="0" left="0" path="../config/sdk_config.h" selected="0" top="9235" codecName="Default"/>
   <SessionOpenFile windowGroup="DockRightTop" x="0" y="88" useTextEdit="1" useBinaryEdit="0" left="0" path="../../../../../../components/ble/nrf_ble_gatt/nrf_ble_gatt.h" selected="0" top="80" codecName="Default"/>
   <SessionOpenFile windowGroup="DockRightTop" x="0" y="115" useTextEdit="1" useBinaryEdit="0" left="17" path="../../../../../../components/ble/ble_services/ble_nus/ble_nus.h" selected="0" top="78" codecName="Default"/>
   <SessionOpenFile windowGroup="DockRightTop" x="0" y="278" useTextEdit="1" useBinaryEdit="0" left="0" path="../../../../../../components/libraries/log/nrf_log.h" selected="0" top="236" codecName="Default"/>
