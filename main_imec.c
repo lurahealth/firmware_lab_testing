@@ -1,8 +1,7 @@
 /** @file
  *
- * This file contains the main application code to interface with the Winsense
- * pH sensor, Microsens pH sensor, or Wellinq pH sensor
- * and the Lura Health mobile application.
+ * This file contains the main application code to interface with the IMEC
+ * analyte array sensor (pH, K+, Na+) and the Lura Health mobile application.
  *
  */
 
@@ -45,7 +44,6 @@
  * OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
  */
-
 
 
 #include <stdint.h>
@@ -186,14 +184,21 @@ static ble_uuid_t m_adv_uuids[]          =                                      
 
 /* Lura Health nRF52810 port assignments */
 #define ENABLE_ISFET_PIN 8
+#define TMUX_A0_PIN      18
+#define TMUX_A1_PIN      17
+#define ENABLE_TMUX_PIN  16
 #define CHIP_POWER_PIN   12
 #define HW_TIMEOUT 10000
 
 /* GLOBALS */
 uint32_t AVG_PH_VAL        = 0;
+uint32_t AVG_NA_VAL        = 0;
+uint32_t AVG_K_VAL         = 0;
 uint32_t AVG_BATT_VAL      = 0;
 uint32_t AVG_TEMP_VAL      = 0;
 bool     PH_IS_READ        = false;
+bool     NA_IS_READ        = false;
+bool     K_IS_READ         = false;
 bool     BATTERY_IS_READ   = false;
 bool     SAADC_CALIBRATED  = false;
 bool     CONNECTION_MADE   = false;
@@ -1017,6 +1022,45 @@ static void advertising_start(bool erase_bonds)
     }
 }
 
+/* Sets TMUX enable pin to HIGH and initializes logic pins */
+void enable_tmux(void)
+{
+    nrf_drv_gpiote_out_config_t config = NRFX_GPIOTE_CONFIG_OUT_SIMPLE(false);
+    if(nrf_drv_gpiote_is_init() == false) {
+          nrf_drv_gpiote_init();
+    }   
+    nrf_drv_gpiote_out_init(ENABLE_TMUX_PIN, &config);
+    nrf_drv_gpiote_out_init(TMUX_A0_PIN, &config);
+    nrf_drv_gpiote_out_init(TMUX_A1_PIN, &config);
+    
+    nrf_drv_gpiote_out_set(ENABLE_ISFET_PIN); 
+}
+
+void disable_tmux(void)
+{
+    nrf_drv_gpiote_out_clear(ENABLE_TMUX_PIN);
+    nrf_drv_gpiote_out_clear(TMUX_A0_PIN);
+    nrf_drv_gpiote_out_clear(TMUX_A1_PIN);    
+}
+
+void read_indicating_electrode_one(void)
+{
+    nrf_drv_gpiote_out_clear(TMUX_A0_PIN);
+    nrf_drv_gpiote_out_clear(TMUX_A1_PIN);
+}
+
+void read_indicating_electrode_two(void)
+{
+    nrf_drv_gpiote_out_set(TMUX_A0_PIN);
+    nrf_drv_gpiote_out_clear(TMUX_A1_PIN);
+}
+
+void read_indicating_electrode_three(void)
+{
+    nrf_drv_gpiote_out_clear(TMUX_A0_PIN);
+    nrf_drv_gpiote_out_set(TMUX_A1_PIN);
+}
+
 
 /* This function sets enable pin for ISFET circuitry to HIGH
  */
@@ -1212,26 +1256,43 @@ void read_saadc_for_regular_protocol(void)
       AVG_MV_VAL += saadc_result_to_mv(temp_val);
     }
     AVG_MV_VAL = AVG_MV_VAL / NUM_SAMPLES;
-    // Assign averaged readings to the correct calibration point
+    if (AVG_MV_VAL > 3000) AVG_MV_VAL = 0;
+    // Store pH value
     if(!PH_IS_READ){
       AVG_PH_VAL = AVG_MV_VAL;
       NRF_LOG_INFO("read pH val, restarting: %d", AVG_PH_VAL);
-      NRF_LOG_FLUSH();
       PH_IS_READ = true;
       restart_saadc();
     }
-    else if (!(PH_IS_READ && BATTERY_IS_READ)){
+    // Store Na+ value
+    else if (!NA_IS_READ){
+      AVG_NA_VAL = AVG_MV_VAL;
+      NRF_LOG_INFO("read Na+ val, restarting: %d", AVG_NA_VAL);
+      NA_IS_READ = true;
+      restart_saadc();
+    }
+    // Store K+ value
+    else if (!K_IS_READ){
+      AVG_K_VAL = AVG_MV_VAL;
+      NRF_LOG_INFO("read K+ val, restarting: %d", AVG_K_VAL);
+      K_IS_READ = true;
+      restart_saadc();
+    }
+    // Store battery value
+    else if (!BATTERY_IS_READ){
       AVG_BATT_VAL = AVG_MV_VAL;
       NRF_LOG_INFO("read batt val, restarting: %d", AVG_BATT_VAL);
-      NRF_LOG_FLUSH();
       BATTERY_IS_READ = true;
       restart_saadc();
     }
+    // Store temperature value
     else {
        AVG_TEMP_VAL = AVG_MV_VAL;
        NRF_LOG_INFO("read temp val, restarting: %d", AVG_TEMP_VAL);
        PH_IS_READ = false;
        BATTERY_IS_READ = false;
+       NA_IS_READ = false;
+       K_IS_READ = false;
        if (!CAL_MODE) {
             // Create bluetooth data
             create_bluetooth_packet(AVG_PH_VAL, AVG_BATT_VAL, 
@@ -1271,13 +1332,27 @@ void init_saadc_for_blocking_sample_conversion(nrf_saadc_channel_config_t channe
 void saadc_init(void)
 {
     nrf_saadc_input_t ANALOG_INPUT;
-    // Change pin depending on global control boolean
-    if (!PH_IS_READ) {
+    // Change pin depending on global control booleans
+
+    // Read pH, Na+ and K+ all from same analog pin
+    if (!PH_IS_READ | !NA_IS_READ | ! K_IS_READ) {
         ANALOG_INPUT = NRF_SAADC_INPUT_AIN2;
+        if (!PH_IS_READ) {
+            enable_tmux();
+            read_indicating_electrode_one();
+        }
+        else if (!NA_IS_READ)
+            read_indicating_electrode_two();
+        else
+            read_indicating_electrode_three();
+        nrf_delay_ms(1);
     }
-    else if (!(PH_IS_READ && BATTERY_IS_READ)) {
+    // Read battery after sensor analytes
+    else if (!BATTERY_IS_READ) {
+        disable_tmux(); // TMUX not needed after reading analytes
         ANALOG_INPUT = NRF_SAADC_INPUT_AIN3;
     }
+    // Read thermistor voltage
     else {
         ANALOG_INPUT = NRF_SAADC_INPUT_AIN1;        
     }
