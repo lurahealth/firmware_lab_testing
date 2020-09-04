@@ -217,7 +217,10 @@ int      NUM_CAL_PTS       = 0;
 float     MVAL_CALIBRATION  = 0;
 float     BVAL_CALIBRATION  = 0;
 float     RVAL_CALIBRATION  = 0;
-float     CAL_PERFORMED     = 0;
+float     PH_CAL_PERFORMED  = 0;
+float     K_CAL_PERFORMED   = 0;
+float     NA_CAL_PERFORMED  = 0;
+
 static volatile uint8_t write_flag=0;
 
 /* Used for reading/writing calibration values to flash */
@@ -489,7 +492,7 @@ void reset_calibration_state()
 {
     CAL_MODE        = false;
     READ_CAL_DATA   = false;
-    CAL_PERFORMED   = 1.0;
+    PH_CAL_PERFORMED   = 1.0;
     PT1_READ        = false;
     PT2_READ        = false;
     PT3_READ        = false;
@@ -1122,39 +1125,60 @@ double calculate_pH_from_mV(uint32_t ph_val)
 void pack_calibrated_ph_val(uint32_t ph_val, uint8_t* total_packet)
 {
     uint32_t ASCII_DIG_BASE = 48;
-    // If calibration has not been performed, store 0000 in real pH field [0-3],
-    // and store the raw SAADC data in the last field [15-18]
-    if (!CAL_PERFORMED) {
-      for(int i = 3; i >= 0; i--){
-        total_packet[i] = 0 + ASCII_DIG_BASE;
-      }
+    double real_pH  = calculate_pH_from_mV(ph_val);
+    double pH_decimal_vals = (real_pH - floor(real_pH)) * 100;
+    // Round pH values to 0.25 pH accuracy
+    pH_decimal_vals = round(pH_decimal_vals / 25) * 25;
+    // If decimals round to 100, increment real pH value and set decimals to 0.00
+    if (pH_decimal_vals == 100) {
+      real_pH = real_pH + 1.0;
+      pH_decimal_vals = 0.00;
     }
-    // If calibration has been performed, store real pH in [0-3],
-    // and store the raw millivolt data in the last field [15-18]
-    else if (CAL_PERFORMED) {
-      double real_pH  = calculate_pH_from_mV(ph_val);
-      double pH_decimal_vals = (real_pH - floor(real_pH)) * 100;
-      // Round pH values to 0.25 pH accuracy
-      pH_decimal_vals = round(pH_decimal_vals / 25) * 25;
-      // If decimals round to 100, increment real pH value and set decimals to 0.00
-      if (pH_decimal_vals == 100) {
-        real_pH = real_pH + 1.0;
-        pH_decimal_vals = 0.00;
-      }
-      // If pH is 9.99 or lower, format with 2 decimal places (4 bytes total)
-      if (real_pH < 10.0) {
-        total_packet[0] = (uint8_t) ((uint8_t)floor(real_pH) + ASCII_DIG_BASE);
-        total_packet[1] = 46;
-        total_packet[2] = (uint8_t) (((uint8_t)pH_decimal_vals / 10) + ASCII_DIG_BASE);
-        total_packet[3] = (uint8_t) (((uint8_t)pH_decimal_vals % 10) + ASCII_DIG_BASE);
-      }
-      // If pH is 10.0 or greater, format with 1 decimal place (still 4 bytes total)
-      else {
-        total_packet[0] = (uint8_t) ((uint8_t)floor(real_pH / 10) + ASCII_DIG_BASE);
-        total_packet[1] = (uint8_t) ((uint8_t)floor((uint8_t)real_pH % 10) + ASCII_DIG_BASE);
-        total_packet[2] = 46;
-        total_packet[3] = (uint8_t) (((uint8_t)pH_decimal_vals / 10) + ASCII_DIG_BASE);
-      }
+    // If pH is 9.99 or lower, format with 2 decimal places (4 bytes total)
+    if (real_pH < 10.0) {
+      total_packet[0] = (uint8_t) ((uint8_t)floor(real_pH) + ASCII_DIG_BASE);
+      total_packet[1] = 46;
+      total_packet[2] = (uint8_t) (((uint8_t)pH_decimal_vals / 10) + ASCII_DIG_BASE);
+      total_packet[3] = (uint8_t) (((uint8_t)pH_decimal_vals % 10) + ASCII_DIG_BASE);
+    }
+    // If pH is 10.0 or greater, format with 1 decimal place (still 4 bytes total)
+    else {
+      total_packet[0] = (uint8_t) ((uint8_t)floor(real_pH / 10) + ASCII_DIG_BASE);
+      total_packet[1] = (uint8_t) ((uint8_t)floor((uint8_t)real_pH % 10) + ASCII_DIG_BASE);
+      total_packet[2] = 46;
+      total_packet[3] = (uint8_t) (((uint8_t)pH_decimal_vals / 10) + ASCII_DIG_BASE);
+    }
+}
+
+void pack_calibrated_k_val(void)
+{
+
+}
+
+void pack_calibrated_na_val(void)
+{
+
+}
+
+/* Packs a mV value between 0 - 3000 into char string total_packet, from 
+ * total_packet[p] to total_packet[p + l - 1]. Ex: 1234 --> ['1','2','3','4']
+ *
+ * uint8_t p is the position of most significat digit, i.e. '1' in 1234
+ * uint8_t l is the length of the number to be stored
+ */
+void pack_mv_value(uint32_t mv_val, uint8_t* total_packet, uint8_t p, uint8_t l)
+{
+    uint32_t ASCII_DIG_BASE = 48;
+    uint32_t temp = 0;            // hold intermediate divisions of variables
+    // Packing protocol for number abcd: 
+    //  [... 0, 0, 0, d] --> [... 0, 0, c, d] --> ... --> [... a, b, c, d]
+    temp = mv_val;
+    for(int i = p+l-1; i >= p; i--){
+        if (i == p+l-1) total_packet[i] = (uint8_t)(temp % 10 + ASCII_DIG_BASE);
+        else {
+            temp = temp / 10;
+            total_packet[i] = (uint8_t)(temp % 10 + ASCII_DIG_BASE);
+        }
     }
 }
 
@@ -1165,64 +1189,40 @@ void pack_temperature_val(uint32_t temp_val, uint8_t* total_packet)
     double real_temp = calculate_celsius_from_mv(temp_val);
     NRF_LOG_INFO("temp celsius: " NRF_LOG_FLOAT_MARKER " \n", NRF_LOG_FLOAT(real_temp));
     double temp_decimal_vals = (real_temp - floor(real_temp)) * 100;
-    total_packet[5] = (uint8_t) ((uint8_t)floor(real_temp / 10) + ASCII_DIG_BASE);
-    total_packet[6] = (uint8_t) ((uint8_t)floor((uint8_t)real_temp % 10) + ASCII_DIG_BASE);
-    total_packet[7] = 46;
-    total_packet[8] = (uint8_t) (((uint8_t)temp_decimal_vals / 10) + ASCII_DIG_BASE);
-
+    total_packet[30] = (uint8_t) ((uint8_t)floor(real_temp / 10) + ASCII_DIG_BASE);
+    total_packet[31] = (uint8_t) ((uint8_t)floor((uint8_t)real_temp % 10) + ASCII_DIG_BASE);
+    total_packet[32] = 46;
+    total_packet[33] = (uint8_t) (((uint8_t)temp_decimal_vals / 10) + ASCII_DIG_BASE);
 }
 
-// Packs battery value into total_packet[10-13], as millivolts
-void pack_battery_val(uint32_t batt_val, uint8_t* total_packet)
-{
-    uint32_t ASCII_DIG_BASE = 48;
-    uint32_t temp = 0;            // hold intermediate divisions of variables
-    // Packing protocol for number abcd: 
-    //  [... 0, 0, 0, d] --> [... 0, 0, c, d] --> ... --> [... a, b, c, d]
-    temp = batt_val;
-    for(int i = 13; i >= 10; i--){
-        if (i == 13) total_packet[i] = (uint8_t)(temp % 10 + ASCII_DIG_BASE);
-        else {
-            temp = temp / 10;
-            total_packet[i] = (uint8_t)(temp % 10 + ASCII_DIG_BASE);
-        }
-    }
-}
 
-// Packs uncalibrated pH value into total_packet[15-18], as millivolts
-void pack_uncalibrated_ph_val(uint32_t ph_val, uint8_t* total_packet)
-{
-    uint32_t ASCII_DIG_BASE = 48;
-    uint32_t temp = 0;            // hold intermediate divisions of variables
-    // Packing protocol for number abcd: 
-    //  [... 0, 0, 0, d] --> [... 0, 0, c, d] --> ... --> [... a, b, c, d]
-    temp = ph_val;
-    for(int i = 18; i >= 15; i--){
-        if (i == 18) total_packet[i] = (uint8_t)(temp % 10 + ASCII_DIG_BASE);
-        else {
-            temp = temp / 10;
-            total_packet[i] = (uint8_t)(temp % 10 + ASCII_DIG_BASE);
-        }
-    }
-}
-
-// Pack values into byte array to send via bluetooth
-void create_bluetooth_packet(uint32_t ph_val,
-                             uint32_t batt_val,        
-                             uint32_t temp_val, 
-                             uint8_t* total_packet)
+/* Pack values into byte array to send via bluetooth
+ *
+ * Format: {pH_cal, Na_cal, K_cal, pH_mv, Na_mv, K_mv, temp_c, batt_mv},
+ * where every value is 4 chars
+ */
+void create_bluetooth_packet(uint32_t ph_val,   uint32_t na_val,
+                             uint32_t k_val,    uint32_t batt_val,        
+                             uint32_t temp_val, uint8_t* total_packet)
 {
     /*
-        {0,0,0,0,44,    calibrated pH value arr[0-3], comma arr[4]
-         0,0,0,0,44,    temperature arr[5-8], comma arr[9]
-         0,0,0,0,44,    battery value arr[10-13], commar arr[14]
-         0 0 0 0,10};   raw pH value arr[15-18], EOL arr[19]
+        {48,48,48,48,44,48,48,48,48,44,    ph_cal[0-3], na_cal[5-8],
+         48,48,48,48,44,48,48,48,48,44,    k_cal[10-13], ph_mv[15-18],
+         48,48,48,48,44,48,48,48,48,44,    na_mv[20-23], k_mv[25-28],
+         48,48,48,48,44,48,48,48,48,10};   temp_c[30-33], batt_mv[35-38]
     */
-      
-    pack_calibrated_ph_val(ph_val, total_packet);
+    
+    if (!PH_CAL_PERFORMED)
+        pack_calibrated_ph_val(ph_val, total_packet);
+    if (!K_CAL_PERFORMED)
+        pack_calibrated_k_val();
+    if (!NA_CAL_PERFORMED)
+        pack_calibrated_na_val();
+    pack_mv_value(ph_val, total_packet, 15, 4);
+    pack_mv_value(na_val, total_packet, 20, 4);
+    pack_mv_value(k_val,  total_packet, 25, 4);
     pack_temperature_val(temp_val, total_packet);
-    pack_battery_val(batt_val, total_packet);
-    pack_uncalibrated_ph_val(ph_val, total_packet);   
+    pack_mv_value(batt_val, total_packet, 35, 4);  
 }
 
 uint32_t saadc_result_to_mv(uint32_t saadc_result)
@@ -1242,7 +1242,7 @@ void read_saadc_for_regular_protocol(void)
     uint32_t   avg_saadc_reading = 0;
     // Byte array to store total packet
     // {pH_cal, Na_cal, K_cal, pH_mv, Na_mv, K_mv, temp_c, batt_mv}
-    uint8_t total_packet[] = {48,48,48,48,44,48,48,48,48,44,
+    uint8_t total_packet[] = {48,48,48,48,44,48,48,48,48,44,  
                               48,48,48,48,44,48,48,48,48,44,    
                               48,48,48,48,44,48,48,48,48,44,    
                               48,48,48,48,44,48,48,48,48,10};  
@@ -1297,8 +1297,8 @@ void read_saadc_for_regular_protocol(void)
        K_IS_READ = false;
        if (!CAL_MODE) {
             // Create bluetooth data
-//            create_bluetooth_packet(AVG_PH_VAL, AVG_NA_VAL, AVG_BATT_VAL, 
-//                                    AVG_K_VAL,  AVG_TEMP_VAL, total_packet);
+            create_bluetooth_packet(AVG_PH_VAL, AVG_NA_VAL, AVG_K_VAL, 
+                                    AVG_BATT_VAL, AVG_TEMP_VAL, total_packet);
 
             // Send data
             err_code = ble_nus_data_send(&m_nus, total_packet, 
@@ -1538,7 +1538,7 @@ static void fds_write(float value, uint16_t FILE_ID, uint16_t REC_KEY)
       record.data.p_data = &RVAL_CALIBRATION;
     }
     else if(FILE_ID == CAL_DONE_FILE_ID && REC_KEY == CAL_DONE_REC_KEY) {
-      record.data.p_data = &CAL_PERFORMED;
+      record.data.p_data = &PH_CAL_PERFORMED;
     }
                     
     ret_code_t ret = fds_record_write(&record_desc, &record);
@@ -1574,7 +1574,7 @@ static void fds_update(float value, uint16_t FILE_ID, uint16_t REC_KEY)
       fds_record_find(RVAL_FILE_ID, RVAL_REC_KEY, &record_desc, &ftok);
     }
     else if(FILE_ID == CAL_DONE_FILE_ID && REC_KEY == CAL_DONE_REC_KEY) {
-      record.data.p_data = &CAL_PERFORMED;
+      record.data.p_data = &PH_CAL_PERFORMED;
       fds_record_find(CAL_DONE_FILE_ID, CAL_DONE_REC_KEY, &record_desc, &ftok);
     }
                     
@@ -1680,8 +1680,8 @@ static void check_calibration_state(void)
     // fds_read will return 0 if the CAL_DONE record does not exist, 
     // or if the stored value is 0
     if(fds_read(CAL_DONE_FILE_ID, CAL_DONE_REC_KEY)) {
-      CAL_PERFORMED = 1.0;
-      NRF_LOG_INFO("Setting CAL_PERFORMED to true\n");
+      PH_CAL_PERFORMED = 1.0;
+      NRF_LOG_INFO("Setting PH_CAL_PERFORMED to true\n");
       // Read values stored in flash and set to respective global variables
       MVAL_CALIBRATION = fds_read(MVAL_FILE_ID, MVAL_REC_KEY);
       BVAL_CALIBRATION = fds_read(BVAL_FILE_ID, BVAL_REC_KEY);
@@ -1699,18 +1699,18 @@ static void check_calibration_state(void)
 void write_cal_values_to_flash(void) 
 {
     // Update the existing flash records
-    if (CAL_PERFORMED) {
+    if (PH_CAL_PERFORMED) {
         fds_update(MVAL_CALIBRATION, MVAL_FILE_ID,     MVAL_REC_KEY);
         fds_update(BVAL_CALIBRATION, BVAL_FILE_ID,     BVAL_REC_KEY);
         fds_update(RVAL_CALIBRATION, RVAL_FILE_ID,     RVAL_REC_KEY);
-        fds_update(CAL_PERFORMED,    CAL_DONE_FILE_ID, CAL_DONE_REC_KEY);
+        fds_update(PH_CAL_PERFORMED,    CAL_DONE_FILE_ID, CAL_DONE_REC_KEY);
     }
     // Write values to new records
     else {
         fds_write(MVAL_CALIBRATION, MVAL_FILE_ID,     MVAL_REC_KEY);
         fds_write(BVAL_CALIBRATION, BVAL_FILE_ID,     BVAL_REC_KEY);
         fds_write(RVAL_CALIBRATION, RVAL_FILE_ID,     RVAL_REC_KEY);
-        fds_write(CAL_PERFORMED,    CAL_DONE_FILE_ID, CAL_DONE_REC_KEY);
+        fds_write(PH_CAL_PERFORMED,    CAL_DONE_FILE_ID, CAL_DONE_REC_KEY);
     }
 }
       
