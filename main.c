@@ -1238,13 +1238,15 @@ uint32_t saadc_result_to_mv(uint32_t saadc_result)
 // Read saadc values for temperature, battery level, and pH using blocking
 void read_saadc_for_regular_protocol(void) 
 {
-    uint16_t   total_size = 20;
+    uint16_t   total_size = 40;
     uint32_t   avg_saadc_reading = 0;
     // Byte array to store total packet
-    uint8_t total_packet[] = {48,48,48,48,44,    /* real pH value, comma */
-                              48,48,48,48,44,    /* Temperature, comma */
-                              48,48,48,48,44,    /* Battery value, comma */
-                              48,48,48,48,10};   /* raw pH value, EOL */
+    // {pH_cal, Na_cal, K_cal, pH_mv, Na_mv, K_mv, temp_c, batt_mv}
+    uint8_t total_packet[] = {48,48,48,48,44,48,48,48,48,44,
+                              48,48,48,48,44,48,48,48,48,44,    
+                              48,48,48,48,44,48,48,48,48,44,    
+                              48,48,48,48,44,48,48,48,48,10};  
+
     int NUM_SAMPLES = 150;
     nrf_saadc_value_t temp_val = 0;
     ret_code_t err_code;
@@ -1295,8 +1297,8 @@ void read_saadc_for_regular_protocol(void)
        K_IS_READ = false;
        if (!CAL_MODE) {
             // Create bluetooth data
-            create_bluetooth_packet(AVG_PH_VAL, AVG_BATT_VAL, 
-                                    AVG_TEMP_VAL, total_packet);
+//            create_bluetooth_packet(AVG_PH_VAL, AVG_NA_VAL, AVG_BATT_VAL, 
+//                                    AVG_K_VAL,  AVG_TEMP_VAL, total_packet);
 
             // Send data
             err_code = ble_nus_data_send(&m_nus, total_packet, 
