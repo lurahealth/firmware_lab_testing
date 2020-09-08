@@ -206,7 +206,7 @@ bool     CONNECTION_MADE   = false;
 #define  PH_CAL 0
 #define  NA_CAL 1
 #define  K_CAL  2
-bool    CAL_PERFORMED[3] = {false, false, false};
+float    CAL_PERFORMED[3] = {0.0, 0.0, 0.0};
 uint8_t CURR_ANALYTE     = 0;    // Set to PH_CAL, NA_CAL, K_CAL as appropriate
 
 #define PT_1 0
@@ -215,9 +215,9 @@ uint8_t CURR_ANALYTE     = 0;    // Set to PH_CAL, NA_CAL, K_CAL as appropriate
 double CAL_PTS_ARR[3]   = {0.0, 0.0, 0.0}; // Stores PT1, PT2, PT3 real calibration values
 double MV_VALS_ARR[3]   = {0.0, 0.0, 0.0}; // Stores PT1, PT2, PT3 mv calibration values
 
-double MVALS_ARR[3]   = {0.0, 0.0, 0.0};
-double BVALS_ARR[3]   = {0.0, 0.0, 0.0};
-double RVALS_ARR[3]   = {0.0, 0.0, 0.0};
+float MVALS_ARR[3]   = {0.0, 0.0, 0.0};
+float BVALS_ARR[3]   = {0.0, 0.0, 0.0};
+float RVALS_ARR[3]   = {0.0, 0.0, 0.0};
 
 
 
@@ -240,22 +240,22 @@ uint16_t CALDONE_RECKEY_ARR[3] = {0x4400, 0x4401, 0x4402};
 static volatile uint8_t write_flag = 0;
 
 // Forward declarations
-void enable_pH_voltage_reading  (void);
-void disable_pH_voltage_reading (void);
-void saadc_init                 (void);
-void enable_isfet_circuit       (void);
-void disable_isfet_circuit      (void);
-void turn_chip_power_on         (void);
-void turn_chip_power_off         (void);
-void restart_saadc              (void);
-void restart_pH_interval_timer  (void);
-void write_cal_values_to_flash   (void);
-void linreg                     (int num, double x[], double y[]);
-void perform_calibration        (uint8_t cal_pts);
-double calculate_pH_from_mV     (uint32_t ph_val);
-double calculate_celsius_from_mv(uint32_t mv);
-static void advertising_start   (bool erase_bonds);
-uint32_t saadc_result_to_mv     (uint32_t saadc_result);
+void enable_pH_voltage_reading   (void);
+void disable_pH_voltage_reading  (void);
+void saadc_init                  (void);
+void enable_isfet_circuit        (void);
+void disable_isfet_circuit       (void);
+void turn_chip_power_on          (void);
+void turn_chip_power_off          (void);
+void restart_saadc               (void);
+void restart_pH_interval_timer   (void);
+void write_cal_values_to_flash    (void);
+void linreg                      (int num, double x[], double y[]);
+void perform_calibration         (uint8_t cal_pts);
+double calculate_px_from_mv(uint32_t mv_val, uint8_t analyte);
+double calculate_celsius_from_mv (uint32_t mv);
+static void advertising_start    (bool erase_bonds);
+uint32_t saadc_result_to_mv      (uint32_t saadc_result);
 
 /*
  * Functions for translating from temperature sensor millivolt output 
@@ -465,34 +465,59 @@ double px_to_mmol_per_L(double px)
     return pow(10.0, -px) * 1000;
 }
 
-// Read saadc values for temperature, battery level, and pH to store for calibration
+
+/* Sets PH_IS_READ, K_IS_READ, and NA_IS_READ to ensure tmux A0 and A1
+ * pins and SAADC input read  the appropriate sensor signal
+ */
+void set_saadc_and_tmux_logic_for_calibration(void)
+{
+    if (CURR_ANALYTE == PH_CAL) {
+        PH_IS_READ = false;
+        NA_IS_READ = false;
+        K_IS_READ  = false;
+    }
+    else if (CURR_ANALYTE == NA_CAL) {
+        PH_IS_READ = true;
+        NA_IS_READ = false;
+        K_IS_READ  = false;
+    }
+    else if (CURR_ANALYTE == K_CAL) {
+        PH_IS_READ = true;
+        NA_IS_READ = true;
+        K_IS_READ  = false;
+    }
+}
+
+/* Reads only the SAADC output for the analyte sensor currently under
+ * calibration. Converts results to mv and stores in MV_VALS_ARR
+ */
 void read_saadc_for_calibration(void) 
 {
     int NUM_SAMPLES = 150;
     nrf_saadc_value_t temp_val = 0;
     ret_code_t err_code;
     disable_pH_voltage_reading();
-    AVG_PH_VAL = 0;
+    double AVG_CAL_MV_READING = 0;
     PH_IS_READ = false;
     enable_pH_voltage_reading();
     for (int i = 0; i < NUM_SAMPLES; i++) {
       err_code = nrfx_saadc_sample_convert(0, &temp_val);
       APP_ERROR_CHECK(err_code);
-      AVG_PH_VAL += saadc_result_to_mv(temp_val);
+      AVG_CAL_MV_READING += saadc_result_to_mv(temp_val);
     }
-    AVG_PH_VAL = AVG_PH_VAL / NUM_SAMPLES;
+    AVG_CAL_MV_READING = AVG_CAL_MV_READING / NUM_SAMPLES;
     // Assign averaged readings to the correct calibration point
     if(!PT1_READ){
-      MV_VALS_ARR[PT_1] = (double)AVG_PH_VAL;
-      PT1_READ   = true;
+      MV_VALS_ARR[PT_1] = AVG_CAL_MV_READING;
+      PT1_READ = true;
     }
     else if (PT1_READ && !PT2_READ){
-      MV_VALS_ARR[PT_2] = (double)AVG_PH_VAL;
-      PT2_READ   = true;
+      MV_VALS_ARR[PT_2] = AVG_CAL_MV_READING;
+      PT2_READ = true;
     }
     else if (PT1_READ && PT2_READ && !PT3_READ){
-       MV_VALS_ARR[PT_3] = (double)AVG_PH_VAL;
-       PT3_READ   = true;
+       MV_VALS_ARR[PT_3] = AVG_CAL_MV_READING;
+       PT3_READ = true;
     }    
     disable_pH_voltage_reading();
 }
@@ -506,12 +531,17 @@ void reset_calibration_state()
     PT2_READ        = false;
     PT3_READ        = false;
     PH_IS_READ      = false;
+    NA_IS_READ      = false;
+    K_IS_READ       = false;
     BATTERY_IS_READ = false;
     CAL_PERFORMED[CURR_ANALYTE] = 1.0;
+    for (int i = 0; i < 3; i++) {
+        CAL_PTS_ARR[i] = 0.0;
+        MV_VALS_ARR[i] = 0.0;
+    }
 }
 
-/*
- * Use the values read from read_saadc_for_calibration to reset the M, B and R values
+/* Use the values read from read_saadc_for_calibration to reset the M, B and R values
  * to recalibrate accuracy of ISFET voltage output to pH value conversions
  */
 void perform_calibration(uint8_t cal_pts)
@@ -519,8 +549,8 @@ void perform_calibration(uint8_t cal_pts)
   if (cal_pts == 1) {
     // Compare mV for pH value to mV calculated for same pH with current M & B values,
     // then adjust B value by the difference in mV values (shift intercept of line)
-    double incorrect_pH  = calculate_pH_from_mV((uint32_t)MV_VALS_ARR[PT_1]);
-    double cal_adjustment = CAL_PTS_ARR[PT_1] - incorrect_pH;
+    double incorrect_pX  = calculate_px_from_mv((uint32_t)MV_VALS_ARR[PT_1], CURR_ANALYTE);
+    double cal_adjustment = CAL_PTS_ARR[PT_1] - incorrect_pX;
     BVALS_ARR[CURR_ANALYTE] = BVALS_ARR[CURR_ANALYTE] + cal_adjustment;
     NRF_LOG_INFO("MVAL: " NRF_LOG_FLOAT_MARKER " ", NRF_LOG_FLOAT(MVALS_ARR[CURR_ANALYTE]));
     NRF_LOG_INFO("BVAL: " NRF_LOG_FLOAT_MARKER " ", NRF_LOG_FLOAT(BVALS_ARR[CURR_ANALYTE]));
@@ -565,7 +595,7 @@ void set_calibration_params(char **packet)
     else if (strstr(cal_analyte_str, "N") != NULL) {CURR_ANALYTE = NA_CAL;}
     else if (strstr(cal_analyte_str, "K") != NULL) {CURR_ANALYTE = K_CAL;}
 
-    NRF_LOG_INFO("Current cal analyte: %d\n", CURR_ANALYTE);
+    NRF_LOG_INFO("*** Current cal analyte: %d ***\n", CURR_ANALYTE);
 }
 
 /*
@@ -575,7 +605,7 @@ void check_for_calibration(char **packet)
 {
     uint32_t err_code;
     // Possible Strings to be received by pH device
-    char *STARTCAL  = "STARTCAL";
+    char *STARTCAL  = "STARTCAL_";
     char *PWROFF    = "PWROFF";
     char *PT        = "PT";
     // Possible strings to send to mobile application
@@ -584,7 +614,6 @@ void check_for_calibration(char **packet)
     // Variables to hold sizes of strings for ble_nus_send function
     uint16_t SIZE_BEGIN = 9;
     uint16_t SIZE_CONF  = 8;
-    
 
     // If packet contains "PWROFF", turn off chip power
     if (strstr(*packet, PWROFF) != NULL){
@@ -600,23 +629,31 @@ void check_for_calibration(char **packet)
         APP_ERROR_CHECK(err_code);
     }
 
+    // If packet starts with "PT", parse out the point 1, 2 or 3 and the value
     if (strstr(*packet, PT) != NULL) {
-        char pt_val_substring[4];
+        char pt_val_substring[5];
         char cal_pt_str[1];
         int  cal_pt = 0;
         // Parse out calibration point from packet
         substring(*packet, cal_pt_str, 3, 1);
-        cal_pt = atoi(cal_pt_str); // 
-        // Parse out pH value from packet
-        substring(*packet, pt_val_substring, 5, 3);
-        // Assign pH value to appropriate variable
-        CAL_PTS_ARR[cal_pt - 1] = atof(pt_val_substring); // PT1_X.X stored at CAL_PTS_ARR[0]
+        cal_pt = atoi(cal_pt_str); 
+        // Parse out point value in appropriate length (3 for pH, 4 for Na/K) then
+        // assign point value to appropriate variable, and convert 
+        // from mmol/L to pK or pNa if necessary
+        if (CURR_ANALYTE == PH_CAL) {
+            substring(*packet, pt_val_substring, 5, 3); // PTX_A.B
+            CAL_PTS_ARR[cal_pt - 1] = atof(pt_val_substring); 
+        }
+        else if (CURR_ANALYTE == K_CAL || CURR_ANALYTE == NA_CAL) {
+            substring(*packet, pt_val_substring, 5, 4); // PTX_AB.C or PTX_A.BC
+            CAL_PTS_ARR[cal_pt - 1] = mmol_per_L_to_px(atof(pt_val_substring)); 
+        }
         // Read calibration data and send confirmation packet
         read_saadc_for_calibration();
         err_code = ble_nus_data_send(&m_nus, PT_CONFS[cal_pt - 1], 
                                      &SIZE_CONF, m_conn_handle);
         APP_ERROR_CHECK(err_code);
-        // Restart normal data transmission if calibration is complete
+        // Perform calibration and restart normal data transmission if cal is complete
         if (NUM_CAL_PTS == cal_pt) {
           perform_calibration(cal_pt);
           write_cal_values_to_flash();
@@ -1145,19 +1182,24 @@ void restart_saadc(void)
     enable_pH_voltage_reading(); 
 }
 
-double calculate_pH_from_mV(uint32_t ph_val)
+/* Calculates the real pH, pK or pNa value from millivolts using
+ * stored calibration data
+ */
+double calculate_px_from_mv(uint32_t mv_val, uint8_t analyte)
 {
-    // pH = (ph_val - BVAL) / (MVAL)
-    return ((double)ph_val * MVALS_ARR[PH_CAL]) + BVALS_ARR[PH_CAL];
+    return ((double)mv_val * MVALS_ARR[analyte]) + BVALS_ARR[analyte];
 }
 
-// Packs calibrated pH value into total_packet[0-3], rounded to nearest 0.25 pH
-void pack_calibrated_ph_val(uint32_t ph_val, uint8_t* total_packet)
+/* Calculates the real pH value from mV value, and then packs 
+ * calibrated pH value into total_packet[0-3], rounded to nearest 0.25 pH.
+ * Stores each digit from packet[p] to packet[p+3]
+ */
+void pack_calibrated_ph_val(uint32_t ph_mv_val, uint8_t* total_packet, uint8_t p)
 {
     uint32_t ASCII_DIG_BASE = 48;
-    double real_pH  = calculate_pH_from_mV(ph_val);
+    double real_pH  = calculate_px_from_mv(ph_mv_val, PH_CAL);
     double pH_decimal_vals = (real_pH - floor(real_pH)) * 100;
-    // Round pH values to 0.25 pH accuracy
+    // Round pH decimal values to 0.25 pH accuracy
     pH_decimal_vals = round(pH_decimal_vals / 25) * 25;
     // If decimals round to 100, increment real pH value and set decimals to 0.00
     if (pH_decimal_vals == 100) {
@@ -1166,27 +1208,64 @@ void pack_calibrated_ph_val(uint32_t ph_val, uint8_t* total_packet)
     }
     // If pH is 9.99 or lower, format with 2 decimal places (4 bytes total)
     if (real_pH < 10.0) {
-      total_packet[0] = (uint8_t) ((uint8_t)floor(real_pH) + ASCII_DIG_BASE);
-      total_packet[1] = 46;
-      total_packet[2] = (uint8_t) (((uint8_t)pH_decimal_vals / 10) + ASCII_DIG_BASE);
-      total_packet[3] = (uint8_t) (((uint8_t)pH_decimal_vals % 10) + ASCII_DIG_BASE);
+      total_packet[p]   = (uint8_t) ((uint8_t)floor(real_pH) + ASCII_DIG_BASE);
+      total_packet[p+1] = 46;
+      total_packet[p+2] = (uint8_t) (((uint8_t)pH_decimal_vals / 10) + ASCII_DIG_BASE);
+      total_packet[p+3] = (uint8_t) (((uint8_t)pH_decimal_vals % 10) + ASCII_DIG_BASE);
     }
     // If pH is 10.0 or greater, format with 1 decimal place (still 4 bytes total)
     else {
-      total_packet[0] = (uint8_t) ((uint8_t)floor(real_pH / 10) + ASCII_DIG_BASE);
-      total_packet[1] = (uint8_t) ((uint8_t)floor((uint8_t)real_pH % 10) + ASCII_DIG_BASE);
-      total_packet[2] = 46;
-      total_packet[3] = (uint8_t) (((uint8_t)pH_decimal_vals / 10) + ASCII_DIG_BASE);
+      total_packet[p]   = (uint8_t) ((uint8_t)floor(real_pH / 10) + ASCII_DIG_BASE);
+      total_packet[p+1] = (uint8_t) ((uint8_t)floor((uint8_t)real_pH % 10) + ASCII_DIG_BASE);
+      total_packet[p+2] = 46;
+      total_packet[p+3] = (uint8_t) (((uint8_t)pH_decimal_vals / 10) + ASCII_DIG_BASE);
     }
 }
 
-void pack_calibrated_k_val(void)
+/* Calculates the pK value from stored mv value, then converts from pK to mmol/L.
+ * Data is rounded to nearest 0.1 mmol/L decimal place. Stores each digit from 
+ * packet[p] to packet[p+3]
+ */
+void pack_calibrated_k_val(uint32_t k_mv_val, uint8_t* total_packet, uint8_t p)
 {
-
+    uint32_t ASCII_DIG_BASE = 48;
+    double pK_value = calculate_px_from_mv(k_mv_val, K_CAL);
+    double k_mmol_L = px_to_mmol_per_L(pK_value);
+    double k_decimal_vals = (k_mmol_L - floor(k_mmol_L)) * 100;
+    // Round K decimal values to nearest 0.1 accuracy
+    k_decimal_vals = round(k_decimal_vals / 10) * 10;
+    // If decimals rounds to 100, increment k_mmol_l and set decimals to 0
+    if (k_decimal_vals == 100) {
+        k_mmol_L = k_mmol_L + 1.0;
+        k_decimal_vals = 0.00;
+    }
+    total_packet[p]   = (uint8_t) ((uint8_t)floor(k_mmol_L / 10) + ASCII_DIG_BASE);
+    total_packet[p+1] = (uint8_t) ((uint8_t)floor((uint8_t)k_mmol_L % 10) + ASCII_DIG_BASE);
+    total_packet[p+2] = 46;
+    total_packet[p+3] = (uint8_t) (((uint8_t)k_decimal_vals / 10) + ASCII_DIG_BASE);
 }
 
-void pack_calibrated_na_val(void)
+/* Calculates the pK value from stored mv value, then converts from pK to mmol/L.
+ * Data is rounded to nearest 0.1 mmol/L decimal place. Stores each digit from 
+ * packet[p] to packet[p+3]
+ */
+void pack_calibrated_na_val(uint32_t na_mv_val, uint8_t* total_packet, uint8_t p)
 {
+    uint32_t ASCII_DIG_BASE = 48;
+    double pNa_value = calculate_px_from_mv(na_mv_val, NA_CAL);
+    double na_mmol_L = px_to_mmol_per_L(pNa_value);
+    double na_decimal_vals = (na_mmol_L - floor(na_mmol_L)) * 100;
+    // Round K decimal values to nearest 0.1 accuracy
+    na_decimal_vals = round(na_decimal_vals / 10) * 10;
+    // If decimals rounds to 100, increment k_mmol_l and set decimals to 0
+    if (na_decimal_vals == 100) {
+        na_mmol_L = na_mmol_L + 1.0;
+        na_decimal_vals = 0.00;
+    }
+    total_packet[p]   = (uint8_t) ((uint8_t)floor(na_mmol_L / 10) + ASCII_DIG_BASE);
+    total_packet[p+1] = (uint8_t) ((uint8_t)floor((uint8_t)na_mmol_L % 10) + ASCII_DIG_BASE);
+    total_packet[p+2] = 46;
+    total_packet[p+3] = (uint8_t) (((uint8_t)na_decimal_vals / 10) + ASCII_DIG_BASE);
 
 }
 
@@ -1212,17 +1291,19 @@ void pack_mv_value(uint32_t mv_val, uint8_t* total_packet, uint8_t p, uint8_t l)
     }
 }
 
-// Packs temperature value into total_packet[5-8], as degrees Celsius
-void pack_temperature_val(uint32_t temp_val, uint8_t* total_packet)
+/* Packs temperature value into total_packet[5-8], as degrees Celsius.
+ * Stores each digit from packet[p] to packet[p+3]
+ */
+void pack_temperature_val(uint32_t temp_val, uint8_t* total_packet, uint8_t p)
 {
     uint32_t ASCII_DIG_BASE = 48;
     double real_temp = calculate_celsius_from_mv(temp_val);
     NRF_LOG_INFO("temp celsius: " NRF_LOG_FLOAT_MARKER " \n", NRF_LOG_FLOAT(real_temp));
     double temp_decimal_vals = (real_temp - floor(real_temp)) * 100;
-    total_packet[30] = (uint8_t) ((uint8_t)floor(real_temp / 10) + ASCII_DIG_BASE);
-    total_packet[31] = (uint8_t) ((uint8_t)floor((uint8_t)real_temp % 10) + ASCII_DIG_BASE);
-    total_packet[32] = 46;
-    total_packet[33] = (uint8_t) (((uint8_t)temp_decimal_vals / 10) + ASCII_DIG_BASE);
+    total_packet[p]   = (uint8_t) ((uint8_t)floor(real_temp / 10) + ASCII_DIG_BASE);
+    total_packet[p+1] = (uint8_t) ((uint8_t)floor((uint8_t)real_temp % 10) + ASCII_DIG_BASE);
+    total_packet[p+2] = 46;
+    total_packet[p+3] = (uint8_t) (((uint8_t)temp_decimal_vals / 10) + ASCII_DIG_BASE);
 }
 
 
@@ -1242,16 +1323,22 @@ void create_bluetooth_packet(uint32_t ph_val,   uint32_t na_val,
          48,48,48,48,44,48,48,48,48,10};   temp_c[30-33], batt_mv[35-38]
     */
     
-    if (CAL_PERFORMED[PH_CAL])
-        pack_calibrated_ph_val(ph_val, total_packet);
-    if (CAL_PERFORMED[K_CAL])
-        pack_calibrated_k_val();
-    if (CAL_PERFORMED[NA_CAL])
-        pack_calibrated_na_val();
+    if (CAL_PERFORMED[PH_CAL]) {
+        pack_calibrated_ph_val(ph_val, total_packet, 0);
+        NRF_LOG_INFO("PH_CAL is 1.0, packing calibrated ph");
+    }
+    if (CAL_PERFORMED[NA_CAL]){
+        NRF_LOG_INFO("NA_CAL is 1.0, packing calibrated Na");
+        pack_calibrated_na_val(na_val, total_packet, 5);
+    }
+    if (CAL_PERFORMED[K_CAL]) {
+        pack_calibrated_k_val(k_val, total_packet, 10);
+        NRF_LOG_INFO("K_CAL is 1.0, packing calibrated K");
+    }
     pack_mv_value(ph_val, total_packet, 15, 4);
     pack_mv_value(na_val, total_packet, 20, 4);
     pack_mv_value(k_val,  total_packet, 25, 4);
-    pack_temperature_val(temp_val, total_packet);
+    pack_temperature_val(temp_val, total_packet, 30);
     pack_mv_value(batt_val, total_packet, 35, 4);  
 }
 
@@ -1367,7 +1454,7 @@ void saadc_init(void)
     // Change pin depending on global control booleans
 
     // Read pH, Na+ and K+ all from same analog pin
-    if (!PH_IS_READ | !NA_IS_READ | ! K_IS_READ) {
+    if (!PH_IS_READ || !NA_IS_READ || ! K_IS_READ) {
         ANALOG_INPUT = NRF_SAADC_INPUT_AIN2;
         if (!PH_IS_READ) {
             enable_tmux();
@@ -1705,7 +1792,8 @@ static void check_calibration_state(void)
     fds_stat(&fds_info);
     NRF_LOG_INFO("open records: %u, words used: %u\n", fds_info.open_records, 
                                                        fds_info.words_used);
-    for (int ANALYTE = 0; ANALYTE < 3; ANALYTE++)
+    for (int ANALYTE = 0; ANALYTE < 3; ANALYTE++){
+        NRF_LOG_INFO("searching flash storage for analyte %d cal data...", ANALYTE);
         // fds_read will return 0 if the CAL_DONE record does not exist, 
         // or if the stored value is 0
         if(fds_read(CALDONE_FILEID_ARR[ANALYTE], CALDONE_RECKEY_ARR[ANALYTE])) {
@@ -1719,6 +1807,7 @@ static void check_calibration_state(void)
           NRF_LOG_INFO("Analyte %d BVAL: " NRF_LOG_FLOAT_MARKER " \n", ANALYTE, NRF_LOG_FLOAT(BVALS_ARR[ANALYTE]));
           NRF_LOG_INFO("Analyte %d RVAL: " NRF_LOG_FLOAT_MARKER " \n", ANALYTE, NRF_LOG_FLOAT(RVALS_ARR[ANALYTE]));
         }
+    }
 }
 
 /* If calibration has already been performed then update existing records with new 
@@ -1729,6 +1818,7 @@ void write_cal_values_to_flash(void)
 {
     // Update the existing flash records
     if (CAL_PERFORMED[CURR_ANALYTE]) {
+        NRF_LOG_INFO("cal already performed, updating records");
         fds_update(MVALS_ARR[CURR_ANALYTE], MVAL_FILEID_ARR[CURR_ANALYTE], MVAL_RECKEY_ARR[CURR_ANALYTE]);
         fds_update(BVALS_ARR[CURR_ANALYTE], BVAL_FILEID_ARR[CURR_ANALYTE], BVAL_RECKEY_ARR[CURR_ANALYTE]);
         fds_update(RVALS_ARR[CURR_ANALYTE], RVAL_FILEID_ARR[CURR_ANALYTE], RVAL_RECKEY_ARR[CURR_ANALYTE]);
@@ -1736,10 +1826,15 @@ void write_cal_values_to_flash(void)
     }
     // Write values to new records
     else {
+        NRF_LOG_INFO("cal not performed yet, writing new values");
         fds_write(MVALS_ARR[CURR_ANALYTE], MVAL_FILEID_ARR[CURR_ANALYTE], MVAL_RECKEY_ARR[CURR_ANALYTE]);
+        NRF_LOG_INFO("wrote mval to flash");
         fds_write(BVALS_ARR[CURR_ANALYTE], BVAL_FILEID_ARR[CURR_ANALYTE], BVAL_RECKEY_ARR[CURR_ANALYTE]);
+        NRF_LOG_INFO("wrote bval to flash");
         fds_write(RVALS_ARR[CURR_ANALYTE], BVAL_FILEID_ARR[CURR_ANALYTE], BVAL_RECKEY_ARR[CURR_ANALYTE]);
+        NRF_LOG_INFO("wrote rval to flash");
         fds_write(CAL_PERFORMED[CURR_ANALYTE], CALDONE_FILEID_ARR[CURR_ANALYTE], CALDONE_RECKEY_ARR[CURR_ANALYTE]);
+        NRF_LOG_INFO("wrote caldone to flash");
     }
 }
       
