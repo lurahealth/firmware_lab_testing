@@ -21,7 +21,7 @@ This application was built upon the UART Example. To build and run, place all fi
                   confirmation packet
         - For X calibration points indicated within "STARTCALX" packet, send 
           packets following the format  "PTN_AB.C" where N is every value from
-          1 to X and AB.C is a mmol/L value to be referenced for the calibration 
+          1 to X and AB.C is a mmol/L or pH value to be referenced for the calibration 
           reading. AB.C can also have format A.BC - 3 digits with one decimal
                 - The peripheral will return a "PTXCONF" confirmation packet
         - Once X "PTN_AB.C" packets have been sent, the peripheral will run a 
