@@ -190,10 +190,10 @@ static ble_uuid_t m_adv_uuids[]          =                                      
 #define HW_TIMEOUT 10000
 
 /* GLOBALS */
-uint32_t AVG_PH_VAL        = 0;
+uint32_t AVG_PX_VAL        = 0;
 uint32_t AVG_BATT_VAL      = 0;
 uint32_t AVG_TEMP_VAL      = 0;
-bool     PH_IS_READ        = false;
+bool     PX_IS_READ        = false;
 bool     BATTERY_IS_READ   = false;
 bool     SAADC_CALIBRATED  = false;
 bool     CONNECTION_MADE   = false;
@@ -202,11 +202,11 @@ bool     READ_CAL_DATA     = false;
 bool     PT1_READ          = false;
 bool     PT2_READ          = false;
 bool     PT3_READ          = false;
-double   PT1_PH_VAL        = 0;
+double   PT1_PX_VAL        = 0;
 double   PT1_MV_VAL        = 0;
-double   PT2_PH_VAL        = 0;
+double   PT2_PX_VAL        = 0;
 double   PT2_MV_VAL        = 0;
-double   PT3_PH_VAL        = 0;
+double   PT3_PX_VAL        = 0;
 double   PT3_MV_VAL        = 0;
 int      NUM_CAL_PTS       = 0;
 float     MVAL_CALIBRATION  = 0;
@@ -230,19 +230,19 @@ static       nrf_ppi_channel_t m_ppi_channel;
 
 
 // Forward declarations
-void enable_pH_voltage_reading  (void);
-void disable_pH_voltage_reading (void);
+void enable_px_voltage_reading  (void);
+void disable_px_voltage_reading (void);
 void saadc_init                 (void);
 void enable_isfet_circuit       (void);
 void disable_isfet_circuit      (void);
 void turn_chip_power_on         (void);
 void turn_chip_power_off        (void);
 void restart_saadc              (void);
-void restart_pH_interval_timer  (void);
+void restart_px_interval_timer  (void);
 void write_cal_values_to_flash  (void);
 void linreg                     (int num, double x[], double y[]);
 void perform_calibration        (uint8_t cal_pts);
-double calculate_pH_from_mV     (uint32_t ph_val);
+double calculate_px_from_mV     (uint32_t px_val);
 double calculate_celsius_from_mv(uint32_t mv);
 static void advertising_start   (bool erase_bonds);
 uint32_t saadc_result_to_mv     (uint32_t saadc_result);
@@ -439,43 +439,40 @@ void substring(char s[], char sub[], int p, int l) {
    sub[c] = '\0';
 }
 
-// Read saadc values for temperature, battery level, and pH to store for calibration
+// Read saadc values for temperature, battery level, and px to store for calibration
 void read_saadc_for_calibration(void) 
 {
     int NUM_SAMPLES = 50;
     nrf_saadc_value_t temp_val = 0;
     ret_code_t err_code;
-    disable_pH_voltage_reading();
-    AVG_PH_VAL = 0;
+    disable_px_voltage_reading();
+    AVG_PX_VAL = 0;
     READ_CAL_DATA = true;
-    PH_IS_READ = false;
-    // Make sure isfet circuit is enabled for saadc readings
-//    enable_isfet_circuit();
-//    nrf_delay_ms(10);
-    // Take saadc readings for pH, temp and battery
-    enable_pH_voltage_reading();
+    PX_IS_READ = false;
+    // Take saadc readings for px, temp and battery
+    enable_px_voltage_reading();
     for (int i = 0; i < NUM_SAMPLES; i++) {
       err_code = nrfx_saadc_sample_convert(0, &temp_val);
       APP_ERROR_CHECK(err_code);
-      AVG_PH_VAL += saadc_result_to_mv(temp_val);
+      AVG_PX_VAL += saadc_result_to_mv(temp_val);
     }
-    AVG_PH_VAL = AVG_PH_VAL / NUM_SAMPLES;
-    //NRF_LOG_INFO("averaged avg_ph_val: %u\n");
+    AVG_PX_VAL = AVG_PX_VAL / NUM_SAMPLES;
+    //NRF_LOG_INFO("averaged AVG_PX_VAL: %u\n");
     //NRF_LOG_FLUSH();
     // Assign averaged readings to the correct calibration point
     if(!PT1_READ){
-      PT1_MV_VAL = (double)AVG_PH_VAL;
+      PT1_MV_VAL = (double)AVG_PX_VAL;
       PT1_READ   = true;
     }
     else if (PT1_READ && !PT2_READ){
-      PT2_MV_VAL = (double)AVG_PH_VAL;
+      PT2_MV_VAL = (double)AVG_PX_VAL;
       PT2_READ = true;
     }
     else if (PT1_READ && PT2_READ && !PT3_READ){
-       PT3_MV_VAL = (double)AVG_PH_VAL;
+       PT3_MV_VAL = (double)AVG_PX_VAL;
        PT3_READ = true;
     }    
-    disable_pH_voltage_reading();
+    disable_px_voltage_reading();
 }
 
 /* Helper function to clear calibration global state variables
@@ -488,36 +485,36 @@ void reset_calibration_state()
     PT1_READ        = false;
     PT2_READ        = false;
     PT3_READ        = false;
-    PH_IS_READ      = false;
+    PX_IS_READ      = false;
     BATTERY_IS_READ = false;
 }
 
 /*
  * Use the values read from read_saadc_for_calibration to reset the M, B and R values
- * to recalibrate accuracy of ISFET voltage output to pH value conversions
+ * to recalibrate accuracy of ISFET voltage output to px value conversions
  */
 void perform_calibration(uint8_t cal_pts)
 {
   if (cal_pts == 1) {
-    // Compare mV for pH value to mV calculated for same pH with current M & B values,
+    // Compare mV for px value to mV calculated for same px with current M & B values,
     // then adjust B value by the difference in mV values (shift intercept of line)
-    double incorrect_pH  = calculate_pH_from_mV((uint32_t)PT1_MV_VAL);
-    double cal_adjustment = PT1_PH_VAL - incorrect_pH;
+    double incorrect_px  = calculate_px_from_mV((uint32_t)PT1_MV_VAL);
+    double cal_adjustment = PT1_PX_VAL - incorrect_px;
     BVAL_CALIBRATION = BVAL_CALIBRATION + cal_adjustment;
     NRF_LOG_INFO("MVAL: " NRF_LOG_FLOAT_MARKER " ", NRF_LOG_FLOAT(MVAL_CALIBRATION));
     NRF_LOG_INFO("BVAL: " NRF_LOG_FLOAT_MARKER " ", NRF_LOG_FLOAT(BVAL_CALIBRATION));
     NRF_LOG_INFO("RVAL: " NRF_LOG_FLOAT_MARKER " ", NRF_LOG_FLOAT(RVAL_CALIBRATION));
   }
   else if (cal_pts == 2) {
-    // Create arrays of pH value and corresponding mV values (change all line properties)
+    // Create arrays of px value and corresponding mV values (change all line properties)
     double x_vals[] = {PT1_MV_VAL, PT2_MV_VAL};
-    double y_vals[] = {PT1_PH_VAL, PT2_PH_VAL};
+    double y_vals[] = {PT1_PX_VAL, PT2_PX_VAL};
     linreg(cal_pts, x_vals, y_vals);
   }
   else if (cal_pts == 3) {
-    // Create arrays of pH value and corresponding mV values (change all line properties)
+    // Create arrays of px value and corresponding mV values (change all line properties)
     double x_vals[] = {PT1_MV_VAL, PT2_MV_VAL, PT3_MV_VAL};
-    double y_vals[] = {PT1_PH_VAL, PT2_PH_VAL, PT3_PH_VAL};
+    double y_vals[] = {PT1_PX_VAL, PT2_PX_VAL, PT3_PX_VAL};
     linreg(cal_pts, x_vals, y_vals);
   }
 }
@@ -527,7 +524,7 @@ void perform_calibration(uint8_t cal_pts)
  */
 void check_for_calibration(char **packet)
 {
-    // Possible Strings to be received by pH device
+    // Possible Strings to be received by px device
     char *STARTCAL  = "STARTCAL";
     char *PWROFF    = "PWROFF";
     char *PT        = "PT";
@@ -537,8 +534,8 @@ void check_for_calibration(char **packet)
     // Variables to hold sizes of strings for ble_nus_send function
     uint16_t SIZE_BEGIN = 9;
     uint16_t SIZE_CONF  = 8;
-    // Used for parsing out pH value from PT1_X.Y (etc) packets
-    char pH_val_substring[4];
+    // Used for parsing out px value from PT1_X.Y (etc) packets
+    char px_val_substring[4];
 
     uint32_t err_code;
 
@@ -550,7 +547,7 @@ void check_for_calibration(char **packet)
     if (strstr(*packet, STARTCAL) != NULL) {
         char cal_pts_str[1];
         CAL_MODE = true;
-        disable_pH_voltage_reading();
+        disable_px_voltage_reading();
         // Parse integer from STARTCALX packet, where X is 1, 2 or 3
         substring(*packet, cal_pts_str, 9, 1);
         NUM_CAL_PTS = atoi(cal_pts_str);
@@ -564,15 +561,15 @@ void check_for_calibration(char **packet)
         // Parse out calibration point from packet
         substring(*packet, cal_pt_str, 3, 1);
         cal_pt = atoi(cal_pt_str);
-        // Parse out pH value from packet
-        substring(*packet, pH_val_substring, 5, 3);
-        // Assign pH value to appropriate variable
+        // Parse out px value from packet
+        substring(*packet, px_val_substring, 5, 3);
+        // Assign px value to appropriate variable
         if (cal_pt == 1)
-            PT1_PH_VAL = atof(pH_val_substring); 
+            PT1_PX_VAL = atof(px_val_substring); 
         else if (cal_pt == 2)
-            PT2_PH_VAL = atof(pH_val_substring); 
+            PT2_PX_VAL = atof(px_val_substring); 
         else if (cal_pt == 3)
-            PT3_PH_VAL = atof(pH_val_substring); 
+            PT3_PX_VAL = atof(px_val_substring); 
         // Read calibration data and send confirmation packet
         read_saadc_for_calibration();
         err_code = ble_nus_data_send(&m_nus, PT_CONFS[cal_pt - 1], 
@@ -583,7 +580,7 @@ void check_for_calibration(char **packet)
           perform_calibration(cal_pt);
           write_cal_values_to_flash();
           reset_calibration_state();
-          restart_pH_interval_timer();
+          restart_px_interval_timer();
         }
     }
 }
@@ -1065,51 +1062,51 @@ void restart_saadc(void)
     while(nrfx_saadc_is_busy()) {
         // make sure SAADC is not busy
     }
-    enable_pH_voltage_reading(); 
+    enable_px_voltage_reading(); 
 }
 
-double calculate_pH_from_mV(uint32_t ph_val)
+double calculate_px_from_mV(uint32_t px_val)
 {
-    // pH = (ph_val - BVAL_CALIBRATION) / (MVAL_CALIBRATION)
-    return ((double)ph_val * MVAL_CALIBRATION) + BVAL_CALIBRATION;
+    // px = (px_val - BVAL_CALIBRATION) / (MVAL_CALIBRATION)
+    return ((double)px_val * MVAL_CALIBRATION) + BVAL_CALIBRATION;
 }
 
-// Packs calibrated pH value into total_packet[0-3], rounded to nearest 0.25 pH
-void pack_calibrated_ph_val(uint32_t ph_val, uint8_t* total_packet)
+// Packs calibrated px value into total_packet[0-3], rounded to nearest 0.25 px
+void pack_calibrated_px_val(uint32_t px_val, uint8_t* total_packet)
 {
     uint32_t ASCII_DIG_BASE = 48;
-    // If calibration has not been performed, store 0000 in real pH field [0-3],
+    // If calibration has not been performed, store 0000 in real px field [0-3],
     // and store the raw SAADC data in the last field [15-18]
     if (!CAL_PERFORMED) {
       for(int i = 3; i >= 0; i--){
         total_packet[i] = 0 + ASCII_DIG_BASE;
       }
     }
-    // If calibration has been performed, store real pH in [0-3],
+    // If calibration has been performed, store real px in [0-3],
     // and store the raw millivolt data in the last field [15-18]
     else if (CAL_PERFORMED) {
-      double real_pH  = calculate_pH_from_mV(ph_val);
-      double pH_decimal_vals = (real_pH - floor(real_pH)) * 100;
-      // Round pH values to 0.25 pH accuracy
-      pH_decimal_vals = round(pH_decimal_vals / 25) * 25;
-      // If decimals round to 100, increment real pH value and set decimals to 0.00
-      if (pH_decimal_vals == 100) {
-        real_pH = real_pH + 1.0;
-        pH_decimal_vals = 0.00;
+      double real_px  = calculate_px_from_mV(px_val);
+      double px_decimal_vals = (real_px - floor(real_px)) * 100;
+      // Round px values to 0.25 px accuracy
+      px_decimal_vals = round(px_decimal_vals / 25) * 25;
+      // If decimals round to 100, increment real px value and set decimals to 0.00
+      if (px_decimal_vals == 100) {
+        real_px = real_px + 1.0;
+        px_decimal_vals = 0.00;
       }
-      // If pH is 9.99 or lower, format with 2 decimal places (4 bytes total)
-      if (real_pH < 10.0) {
-        total_packet[0] = (uint8_t) ((uint8_t)floor(real_pH) + ASCII_DIG_BASE);
+      // If px is 9.99 or lower, format with 2 decimal places (4 bytes total)
+      if (real_px < 10.0) {
+        total_packet[0] = (uint8_t) ((uint8_t)floor(real_px) + ASCII_DIG_BASE);
         total_packet[1] = 46;
-        total_packet[2] = (uint8_t) (((uint8_t)pH_decimal_vals / 10) + ASCII_DIG_BASE);
-        total_packet[3] = (uint8_t) (((uint8_t)pH_decimal_vals % 10) + ASCII_DIG_BASE);
+        total_packet[2] = (uint8_t) (((uint8_t)px_decimal_vals / 10) + ASCII_DIG_BASE);
+        total_packet[3] = (uint8_t) (((uint8_t)px_decimal_vals % 10) + ASCII_DIG_BASE);
       }
-      // If pH is 10.0 or greater, format with 1 decimal place (still 4 bytes total)
+      // If px is 10.0 or greater, format with 1 decimal place (still 4 bytes total)
       else {
-        total_packet[0] = (uint8_t) ((uint8_t)floor(real_pH / 10) + ASCII_DIG_BASE);
-        total_packet[1] = (uint8_t) ((uint8_t)floor((uint8_t)real_pH % 10) + ASCII_DIG_BASE);
+        total_packet[0] = (uint8_t) ((uint8_t)floor(real_px / 10) + ASCII_DIG_BASE);
+        total_packet[1] = (uint8_t) ((uint8_t)floor((uint8_t)real_px % 10) + ASCII_DIG_BASE);
         total_packet[2] = 46;
-        total_packet[3] = (uint8_t) (((uint8_t)pH_decimal_vals / 10) + ASCII_DIG_BASE);
+        total_packet[3] = (uint8_t) (((uint8_t)px_decimal_vals / 10) + ASCII_DIG_BASE);
       }
     }
 }
@@ -1145,14 +1142,14 @@ void pack_battery_val(uint32_t batt_val, uint8_t* total_packet)
     }
 }
 
-// Packs uncalibrated pH value into total_packet[15-18], as millivolts
-void pack_uncalibrated_ph_val(uint32_t ph_val, uint8_t* total_packet)
+// Packs uncalibrated px value into total_packet[15-18], as millivolts
+void pack_uncalibrated_px_val(uint32_t px_val, uint8_t* total_packet)
 {
     uint32_t ASCII_DIG_BASE = 48;
     uint32_t temp = 0;            // hold intermediate divisions of variables
     // Packing protocol for number abcd: 
     //  [... 0, 0, 0, d] --> [... 0, 0, c, d] --> ... --> [... a, b, c, d]
-    temp = ph_val;
+    temp = px_val;
     for(int i = 18; i >= 15; i--){
         if (i == 18) total_packet[i] = (uint8_t)(temp % 10 + ASCII_DIG_BASE);
         else {
@@ -1163,22 +1160,22 @@ void pack_uncalibrated_ph_val(uint32_t ph_val, uint8_t* total_packet)
 }
 
 // Pack values into byte array to send via bluetooth
-void create_bluetooth_packet(uint32_t ph_val,
+void create_bluetooth_packet(uint32_t px_val,
                              uint32_t batt_val,        
                              uint32_t temp_val, 
                              uint8_t* total_packet)
 {
     /*
-        {0,0,0,0,44,    calibrated pH value arr[0-3], comma arr[4]
+        {0,0,0,0,44,    calibrated px value arr[0-3], comma arr[4]
          0,0,0,0,44,    temperature arr[5-8], comma arr[9]
          0,0,0,0,44,    battery value arr[10-13], commar arr[14]
-         0 0 0 0,10};   raw pH value arr[15-18], EOL arr[19]
+         0 0 0 0,10};   raw px value arr[15-18], EOL arr[19]
     */
       
-    pack_calibrated_ph_val(ph_val, total_packet);
+    pack_calibrated_px_val(px_val, total_packet);
     pack_temperature_val(temp_val, total_packet);
     pack_battery_val(batt_val, total_packet);
-    pack_uncalibrated_ph_val(ph_val, total_packet);   
+    pack_uncalibrated_px_val(px_val, total_packet);   
 }
 
 uint32_t saadc_result_to_mv(uint32_t saadc_result)
@@ -1191,16 +1188,16 @@ uint32_t saadc_result_to_mv(uint32_t saadc_result)
     return (uint32_t)adc_res_in_mv;
 }
 
-// Read saadc values for temperature, battery level, and pH using blocking
+// Read saadc values for temperature, battery level, and px using blocking
 void read_saadc_for_regular_protocol(void) 
 {
     uint16_t   total_size = 20;
     uint32_t   avg_saadc_reading = 0;
     // Byte array to store total packet
-    uint8_t total_packet[] = {48,48,48,48,44,    /* real pH value, comma */
+    uint8_t total_packet[] = {48,48,48,48,44,    /* real px value, comma */
                               48,48,48,48,44,    /* Temperature, comma */
                               48,48,48,48,44,    /* Battery value, comma */
-                              48,48,48,48,10};   /* raw pH value, EOL */
+                              48,48,48,48,10};   /* raw px value, EOL */
     int NUM_SAMPLES = 150;
     nrf_saadc_value_t temp_val = 0;
     ret_code_t err_code;
@@ -1213,14 +1210,14 @@ void read_saadc_for_regular_protocol(void)
     }
     AVG_MV_VAL = AVG_MV_VAL / NUM_SAMPLES;
     // Assign averaged readings to the correct calibration point
-    if(!PH_IS_READ){
-      AVG_PH_VAL = AVG_MV_VAL;
-      NRF_LOG_INFO("read pH val, restarting: %d", AVG_PH_VAL);
+    if(!PX_IS_READ){
+      AVG_PX_VAL = AVG_MV_VAL;
+      NRF_LOG_INFO("read px val, restarting: %d", AVG_PX_VAL);
       NRF_LOG_FLUSH();
-      PH_IS_READ = true;
+      PX_IS_READ = true;
       restart_saadc();
     }
-    else if (!(PH_IS_READ && BATTERY_IS_READ)){
+    else if (!(PX_IS_READ && BATTERY_IS_READ)){
       AVG_BATT_VAL = AVG_MV_VAL;
       NRF_LOG_INFO("read batt val, restarting: %d", AVG_BATT_VAL);
       NRF_LOG_FLUSH();
@@ -1230,11 +1227,11 @@ void read_saadc_for_regular_protocol(void)
     else {
        AVG_TEMP_VAL = AVG_MV_VAL;
        NRF_LOG_INFO("read temp val, restarting: %d", AVG_TEMP_VAL);
-       PH_IS_READ = false;
+       PX_IS_READ = false;
        BATTERY_IS_READ = false;
        if (!CAL_MODE) {
             // Create bluetooth data
-            create_bluetooth_packet(AVG_PH_VAL, AVG_BATT_VAL, 
+            create_bluetooth_packet(AVG_PX_VAL, AVG_BATT_VAL, 
                                     AVG_TEMP_VAL, total_packet);
 
             // Send data
@@ -1245,7 +1242,7 @@ void read_saadc_for_regular_protocol(void)
               
             NRF_LOG_INFO("BLUETOOTH DATA SENT\n");
        }
-       disable_pH_voltage_reading();
+       disable_px_voltage_reading();
     }    
 }
 
@@ -1266,16 +1263,16 @@ void init_saadc_for_blocking_sample_conversion(nrf_saadc_channel_config_t channe
     APP_ERROR_CHECK(err_code);
 }
 
-/* Reads pH transducer output
+/* Reads px transducer output
  */
 void saadc_init(void)
 {
     nrf_saadc_input_t ANALOG_INPUT;
     // Change pin depending on global control boolean
-    if (!PH_IS_READ) {
+    if (!PX_IS_READ) {
         ANALOG_INPUT = NRF_SAADC_INPUT_AIN2;
     }
-    else if (!(PH_IS_READ && BATTERY_IS_READ)) {
+    else if (!(PX_IS_READ && BATTERY_IS_READ)) {
         ANALOG_INPUT = NRF_SAADC_INPUT_AIN3;
     }
     else {
@@ -1291,14 +1288,14 @@ void saadc_init(void)
 
 /* This function initializes and enables SAADC sampling
  */
-void enable_pH_voltage_reading(void)
+void enable_px_voltage_reading(void)
 {
     saadc_init();
     if (!CAL_MODE)
         read_saadc_for_regular_protocol();
 }
 
-void restart_pH_interval_timer(void)
+void restart_px_interval_timer(void)
 {
       ret_code_t err_code;
       err_code = app_timer_start(m_timer_id, APP_TIMER_TICKS(DATA_INTERVAL), NULL);
@@ -1308,7 +1305,7 @@ void restart_pH_interval_timer(void)
 
 /* Function unitializes and disables SAADC sampling, restarts 1 second timer
  */
-void disable_pH_voltage_reading(void)
+void disable_px_voltage_reading(void)
 {
     nrfx_saadc_uninit();
     NVIC_ClearPendingIRQ(SAADC_IRQn);
@@ -1317,7 +1314,7 @@ void disable_pH_voltage_reading(void)
 
     if (!CAL_MODE) {
       // Restart timer
-      restart_pH_interval_timer();
+      restart_px_interval_timer();
     }
 }
 
@@ -1338,7 +1335,7 @@ void single_shot_timer_handler()
      *  UNCOMMENT TO SEND DATA
      */
 
-    enable_pH_voltage_reading();
+    enable_px_voltage_reading();
 
     /*
      *  COMMENT TO NOT SEND DATA
