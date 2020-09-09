@@ -5,6 +5,8 @@ This application was built upon the UART Example. To build and run, place all fi
 **Packet format:**
 
         [*calibrated_analyte_mmol_per_L*, *temperature_celsius*, *battery_mV*, *raw_analyte_reading_mV*]
+
+        Where every field is 4 human readable ASCII characters representing the numerical value
         
 **How to calibrate:**
 
