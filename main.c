@@ -1,8 +1,8 @@
 /** @file
  *
- * This file contains the main application code to interface with the Winsense
- * pH sensor, Microsens pH sensor, or Wellinq pH sensor
- * and the Lura Health mobile application.
+ * This file contains the main application code to interface with a Microsens 
+ * or Wellinq single analyte sensor that requires mmol/L data reporting when
+ * interfacing with the Lura Health mobile application.
  *
  */
 
