@@ -28,7 +28,7 @@ This application was built upon the UART Example. To build and run, place all fi
           point calibration)
         - Calibrated analyte values will now be sent in the data packets
 
-        **Example of 3 point calibration:**
+        Example of 3 point calibration:
 
                 1. Central:  "STARTCAL3"
                    Response: "CALBEGIN"
