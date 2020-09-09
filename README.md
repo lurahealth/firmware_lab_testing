@@ -29,7 +29,7 @@ This application was built upon the UART Example. To build and run, place all fi
           point calibration)
         - Calibrated analyte values will now be sent in the data packets
 
-        **Example of 3 point calibration for pH:**
+        Example of 3 point calibration for pH:
 
                 1. Central:  "STARTCAL_P3"
                    Response: "CALBEGIN"
@@ -41,7 +41,7 @@ This application was built upon the UART Example. To build and run, place all fi
                    Response: "PT3CONF"
                 5. Data packets will now include calibrated pH data
                 
-         **Example of 2 point calibration for Na+:**
+         Example of 2 point calibration for Na+:
          
                 1. Central:  "STARTCAL_N2"
                    Response: "CALBEGIN"
