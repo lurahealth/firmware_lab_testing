@@ -198,7 +198,6 @@ bool     BATTERY_IS_READ   = false;
 bool     SAADC_CALIBRATED  = false;
 bool     CONNECTION_MADE   = false;
 bool     CAL_MODE          = false;
-bool     READ_CAL_DATA     = false;
 bool     PT1_READ          = false;
 bool     PT2_READ          = false;
 bool     PT3_READ          = false;
@@ -208,6 +207,7 @@ double   PT2_PH_VAL        = 0;
 double   PT2_MV_VAL        = 0;
 double   PT3_PH_VAL        = 0;
 double   PT3_MV_VAL        = 0;
+double     REF_TEMP          = 0;
 int      NUM_CAL_PTS       = 0;
 float     MVAL_CALIBRATION  = 0;
 float     BVAL_CALIBRATION  = 0;
@@ -311,6 +311,22 @@ double calculate_celsius_from_mv(uint32_t mv)
     celsius = celsius / 10.0 + 0.000000001; // Workaround for floating point error
 
     return celsius;
+}
+
+/* Adjusts analyte sensor mV output (raw_mv) based on temperature dependance.
+ * The analyte sensor output is linearly dependant on temperature, i.e. 1400mV
+ * @ 25C, 1405mV @ 30C, and 1410mV @ 35C may all represent the same pH value.
+ *
+ * Adjustment is made using the difference between reference temp (REF_TEMP)
+ * recorded during calibration, and current temp reading taken at the same
+ * time as the analyte sensor mV output.
+ */
+uint32_t sensor_temp_comp(uint32_t raw_analyte_mv, uint32_t temp_mv)
+{
+    double TEMP_DEPENDANCE = 1.10;   // Reasonable avg. mV/C dependance between sensors
+    double curr_temp = calculate_celsius_from_mv(temp_mv);
+    double temp_diff  = REF_TEMP - curr_temp;
+    return raw_analyte_mv + round((temp_diff * TEMP_DEPENDANCE));
 }
 
 /**@brief Function for assert macro callback.
@@ -439,42 +455,78 @@ void substring(char s[], char sub[], int p, int l) {
    sub[c] = '\0';
 }
 
-// Read saadc values for temperature, battery level, and pH to store for calibration
-void read_saadc_for_calibration(void) 
+void read_saadc_and_store_avg_in_cal_pt(int samples)
 {
-    int NUM_SAMPLES = 50;
+    uint32_t AVG_MV_VAL = 0;
     nrf_saadc_value_t temp_val = 0;
     ret_code_t err_code;
-    disable_pH_voltage_reading();
-    AVG_PH_VAL = 0;
-    READ_CAL_DATA = true;
-    PH_IS_READ = false;
-    // Make sure isfet circuit is enabled for saadc readings
-//    enable_isfet_circuit();
-//    nrf_delay_ms(10);
-    // Take saadc readings for pH, temp and battery
-    enable_pH_voltage_reading();
-    for (int i = 0; i < NUM_SAMPLES; i++) {
+    // Average readings
+    for (int i = 0; i < samples; i++) {
       err_code = nrfx_saadc_sample_convert(0, &temp_val);
       APP_ERROR_CHECK(err_code);
-      AVG_PH_VAL += saadc_result_to_mv(temp_val);
+      AVG_MV_VAL += saadc_result_to_mv(temp_val);
     }
-    AVG_PH_VAL = AVG_PH_VAL / NUM_SAMPLES;
-    //NRF_LOG_INFO("averaged avg_ph_val: %u\n");
-    //NRF_LOG_FLUSH();
+    AVG_MV_VAL = AVG_MV_VAL / samples;
     // Assign averaged readings to the correct calibration point
     if(!PT1_READ){
-      PT1_MV_VAL = (double)AVG_PH_VAL;
-      PT1_READ   = true;
+      PT1_MV_VAL = (double)AVG_MV_VAL;
     }
     else if (PT1_READ && !PT2_READ){
-      PT2_MV_VAL = (double)AVG_PH_VAL;
-      PT2_READ = true;
+      PT2_MV_VAL = (double)AVG_MV_VAL;
     }
     else if (PT1_READ && PT2_READ && !PT3_READ){
-       PT3_MV_VAL = (double)AVG_PH_VAL;
+       PT3_MV_VAL = (double)AVG_MV_VAL;
+    }  
+}
+
+void read_saadc_and_set_ref_temp(int samples)
+{
+    uint32_t AVG_MV_VAL = 0;
+    nrf_saadc_value_t temp_val = 0;
+    ret_code_t err_code;
+    // Average readings
+    for (int i = 0; i < samples; i++) {
+      err_code = nrfx_saadc_sample_convert(0, &temp_val);
+      APP_ERROR_CHECK(err_code);
+      AVG_MV_VAL += saadc_result_to_mv(temp_val);
+    }
+    AVG_MV_VAL = AVG_MV_VAL / samples;
+    if (!PT1_READ) {
+        REF_TEMP = calculate_celsius_from_mv(AVG_MV_VAL);
+        PT1_READ = true;
+    }
+    else if (PT1_READ && !PT2_READ) {
+        REF_TEMP = REF_TEMP + calculate_celsius_from_mv(AVG_MV_VAL);
+        if (NUM_CAL_PTS == 2) {REF_TEMP = REF_TEMP / 2.0;}
+        PT2_READ = true;
+    }
+    else if (PT1_READ && PT2_READ && !PT3_READ) {
+       REF_TEMP = REF_TEMP + calculate_celsius_from_mv(AVG_MV_VAL);
+       REF_TEMP = REF_TEMP / 3.0;
        PT3_READ = true;
-    }    
+    }
+    NRF_LOG_INFO("ref temp: " NRF_LOG_FLOAT_MARKER " ", NRF_LOG_FLOAT(REF_TEMP));
+}
+
+/* Read saadc values for analyte sensor and temperature sensor to use
+ * for calibration points and temperature reference
+ */
+void read_saadc_for_calibration(void) 
+{
+    int NUM_SAMPLES = 150;
+    PH_IS_READ      = false;
+    BATTERY_IS_READ = false;
+    
+    // Reset SAADC state before taking first calibration point
+    if (!PT1_READ) {disable_pH_voltage_reading();}
+    enable_pH_voltage_reading();
+    read_saadc_and_store_avg_in_cal_pt(NUM_SAMPLES);   
+    // Reset saadc to read temperature value
+    disable_pH_voltage_reading();
+    PH_IS_READ = true;
+    BATTERY_IS_READ = true; // Work around to read temperature values
+    enable_pH_voltage_reading();
+    read_saadc_and_set_ref_temp(NUM_SAMPLES);
     disable_pH_voltage_reading();
 }
 
@@ -483,7 +535,6 @@ void read_saadc_for_calibration(void)
 void reset_calibration_state()
 {
     CAL_MODE        = false;
-    READ_CAL_DATA   = false;
     CAL_PERFORMED   = 1.0;
     PT1_READ        = false;
     PT2_READ        = false;
@@ -1074,8 +1125,11 @@ double calculate_pH_from_mV(uint32_t ph_val)
     return ((double)ph_val * MVAL_CALIBRATION) + BVAL_CALIBRATION;
 }
 
-// Packs calibrated pH value into total_packet[0-3], rounded to nearest 0.25 pH
-void pack_calibrated_ph_val(uint32_t ph_val, uint8_t* total_packet)
+/* Packs calibrated pH value into total_packet[0-3], rounded to nearest 0.25 pH.
+ * Also compensates pH mv reading for ISFET temp dependance before calculating
+ * pH value
+ */
+void pack_calibrated_ph_val(uint32_t ph_val, uint32_t temp_val, uint8_t* total_packet)
 {
     uint32_t ASCII_DIG_BASE = 48;
     // If calibration has not been performed, store 0000 in real pH field [0-3],
@@ -1088,7 +1142,7 @@ void pack_calibrated_ph_val(uint32_t ph_val, uint8_t* total_packet)
     // If calibration has been performed, store real pH in [0-3],
     // and store the raw millivolt data in the last field [15-18]
     else if (CAL_PERFORMED) {
-      double real_pH  = calculate_pH_from_mV(ph_val);
+      double real_pH  = calculate_pH_from_mV(sensor_temp_comp(ph_val, temp_val));
       double pH_decimal_vals = (real_pH - floor(real_pH)) * 100;
       // Round pH values to 0.25 pH accuracy
       pH_decimal_vals = round(pH_decimal_vals / 25) * 25;
@@ -1175,7 +1229,7 @@ void create_bluetooth_packet(uint32_t ph_val,
          0 0 0 0,10};   raw pH value arr[15-18], EOL arr[19]
     */
       
-    pack_calibrated_ph_val(ph_val, total_packet);
+    pack_calibrated_ph_val(ph_val, temp_val, total_packet);
     pack_temperature_val(temp_val, total_packet);
     pack_battery_val(batt_val, total_packet);
     pack_uncalibrated_ph_val(ph_val, total_packet);   
