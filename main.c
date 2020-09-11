@@ -464,7 +464,10 @@ void read_saadc_and_store_avg_in_cal_pt(int samples)
     for (int i = 0; i < samples; i++) {
       err_code = nrfx_saadc_sample_convert(0, &temp_val);
       APP_ERROR_CHECK(err_code);
-      AVG_MV_VAL += saadc_result_to_mv(temp_val);
+      if (temp_val < 0)
+          AVG_MV_VAL += 0;
+      else
+          AVG_MV_VAL += saadc_result_to_mv(temp_val);
     }
     AVG_MV_VAL = AVG_MV_VAL / samples;
     // Assign averaged readings to the correct calibration point
@@ -488,7 +491,10 @@ void read_saadc_and_set_ref_temp(int samples)
     for (int i = 0; i < samples; i++) {
       err_code = nrfx_saadc_sample_convert(0, &temp_val);
       APP_ERROR_CHECK(err_code);
-      AVG_MV_VAL += saadc_result_to_mv(temp_val);
+      if (temp_val < 0)
+          AVG_MV_VAL += 0;
+      else
+          AVG_MV_VAL += saadc_result_to_mv(temp_val);
     }
     AVG_MV_VAL = AVG_MV_VAL / samples;
     if (!PT1_READ) {

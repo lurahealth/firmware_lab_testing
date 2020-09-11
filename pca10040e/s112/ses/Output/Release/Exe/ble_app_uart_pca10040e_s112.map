@@ -10625,9 +10625,8 @@ Linker script and memory map
                 0x0000000000021860       0x28 Output/ble_app_uart_pca10040e_s112 Release/Obj/main.o
                 0x0000000000021860                saadc_result_to_mv
  .text.read_saadc_and_store_avg_in_cal_pt
-                0x0000000000021888       0x7c Output/ble_app_uart_pca10040e_s112 Release/Obj/main.o
+                0x0000000000021888       0x80 Output/ble_app_uart_pca10040e_s112 Release/Obj/main.o
                 0x0000000000021888                read_saadc_and_store_avg_in_cal_pt
- *fill*         0x0000000000021904        0x4 
  .text.read_saadc_and_set_ref_temp
                 0x0000000000021908      0x164 Output/ble_app_uart_pca10040e_s112 Release/Obj/main.o
                 0x0000000000021908                read_saadc_and_set_ref_temp
@@ -12292,7 +12291,7 @@ OUTPUT(Output/Release/Exe/ble_app_uart_pca10040e_s112.elf elf32-littlearm)
  .comment       0x0000000000000043       0x44 /usr/share/segger_embedded_studio_for_arm_4.22/lib/libm_v7em_t_le_eabi.a(fdlibm.o)
  .comment       0x0000000000000043       0x44 /usr/share/segger_embedded_studio_for_arm_4.22/lib/libc_v7em_t_le_eabi.a(libc2.o)
 
-.debug_line     0x0000000000000000    0x2bb64
+.debug_line     0x0000000000000000    0x2bb6a
  .debug_line    0x0000000000000000      0x1e0 Output/ble_app_uart_pca10040e_s112 Release/Obj/thumb_crt0.o
  .debug_line    0x00000000000001e0      0x921 Output/ble_app_uart_pca10040e_s112 Release/Obj/nrf_log_backend_rtt.o
  .debug_line    0x0000000000000b01      0x700 Output/ble_app_uart_pca10040e_s112 Release/Obj/nrf_log_backend_serial.o
@@ -12354,7 +12353,7 @@ OUTPUT(Output/Release/Exe/ble_app_uart_pca10040e_s112.elf elf32-littlearm)
  .debug_line    0x0000000000027295      0xa50 Output/ble_app_uart_pca10040e_s112 Release/Obj/nrf_sdh.o
  .debug_line    0x0000000000027ce5      0x7f6 Output/ble_app_uart_pca10040e_s112 Release/Obj/nrf_sdh_ble.o
  .debug_line    0x00000000000284db      0x5d9 Output/ble_app_uart_pca10040e_s112 Release/Obj/nrf_sdh_soc.o
- .debug_line    0x0000000000028ab4     0x30b0 Output/ble_app_uart_pca10040e_s112 Release/Obj/main.o
+ .debug_line    0x0000000000028ab4     0x30b6 Output/ble_app_uart_pca10040e_s112 Release/Obj/main.o
 
 .debug_info     0x0000000000000000    0x6f856
  .debug_info    0x0000000000000000       0x22 Output/ble_app_uart_pca10040e_s112 Release/Obj/thumb_crt0.o
@@ -12858,7 +12857,7 @@ OUTPUT(Output/Release/Exe/ble_app_uart_pca10040e_s112.elf elf32-littlearm)
  .debug_frame   0x00000000000053f0       0x44 Output/ble_app_uart_pca10040e_s112 Release/Obj/nrf_sdh_soc.o
  .debug_frame   0x0000000000005434      0x844 Output/ble_app_uart_pca10040e_s112 Release/Obj/main.o
 
-.debug_loc      0x0000000000000000    0x1ecc8
+.debug_loc      0x0000000000000000    0x1ec90
  .debug_loc     0x0000000000000000      0x1af Output/ble_app_uart_pca10040e_s112 Release/Obj/nrf_log_backend_rtt.o
  .debug_loc     0x00000000000001af      0x186 Output/ble_app_uart_pca10040e_s112 Release/Obj/nrf_log_backend_serial.o
  .debug_loc     0x0000000000000335       0x17 Output/ble_app_uart_pca10040e_s112 Release/Obj/nrf_log_default_backends.o
@@ -12915,7 +12914,7 @@ OUTPUT(Output/Release/Exe/ble_app_uart_pca10040e_s112.elf elf32-littlearm)
  .debug_loc     0x000000000001ca5a      0x289 Output/ble_app_uart_pca10040e_s112 Release/Obj/nrf_sdh.o
  .debug_loc     0x000000000001cce3      0x278 Output/ble_app_uart_pca10040e_s112 Release/Obj/nrf_sdh_ble.o
  .debug_loc     0x000000000001cf5b       0x97 Output/ble_app_uart_pca10040e_s112 Release/Obj/nrf_sdh_soc.o
- .debug_loc     0x000000000001cff2     0x1cd6 Output/ble_app_uart_pca10040e_s112 Release/Obj/main.o
+ .debug_loc     0x000000000001cff2     0x1c9e Output/ble_app_uart_pca10040e_s112 Release/Obj/main.o
 
 .debug_pubnames
                 0x0000000000000000    0x19c3c
