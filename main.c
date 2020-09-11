@@ -1119,10 +1119,31 @@ void restart_saadc(void)
     enable_pH_voltage_reading(); 
 }
 
+// Returns pH value from mV reading using calibration values
 double calculate_pH_from_mV(uint32_t ph_val)
 {
     // pH = (ph_val - BVAL_CALIBRATION) / (MVAL_CALIBRATION)
     return ((double)ph_val * MVAL_CALIBRATION) + BVAL_CALIBRATION;
+}
+
+// Returns 99.9 if val is >= 100.0, returns 0.1 if val is < 0
+double validate_float_range(double val)
+{
+    if (val >= 100.0)
+        return 99.9;
+    else if (val < 0.0)
+        return 0.1;
+    else
+        return val;
+}
+
+// Returns 3000 (max mV range) if val is > 3000
+uint32_t validate_uint_range(uint32_t val)
+{
+    if (val > 3000)
+        return 3000;
+    else
+        return val;
 }
 
 /* Packs calibrated pH value into total_packet[0-3], rounded to nearest 0.25 pH.
@@ -1143,6 +1164,7 @@ void pack_calibrated_ph_val(uint32_t ph_val, uint32_t temp_val, uint8_t* total_p
     // and store the raw millivolt data in the last field [15-18]
     else if (CAL_PERFORMED) {
       double real_pH  = calculate_pH_from_mV(sensor_temp_comp(ph_val, temp_val));
+      real_pH = validate_float_range(real_pH);
       double pH_decimal_vals = (real_pH - floor(real_pH)) * 100;
       // Round pH values to 0.25 pH accuracy
       pH_decimal_vals = round(pH_decimal_vals / 25) * 25;
@@ -1173,13 +1195,13 @@ void pack_temperature_val(uint32_t temp_val, uint8_t* total_packet)
 {
     uint32_t ASCII_DIG_BASE = 48;
     double real_temp = calculate_celsius_from_mv(temp_val);
+    real_temp = validate_float_range(real_temp);
     NRF_LOG_INFO("temp celsius: " NRF_LOG_FLOAT_MARKER " \n", NRF_LOG_FLOAT(real_temp));
     double temp_decimal_vals = (real_temp - floor(real_temp)) * 100;
     total_packet[5] = (uint8_t) ((uint8_t)floor(real_temp / 10) + ASCII_DIG_BASE);
     total_packet[6] = (uint8_t) ((uint8_t)floor((uint8_t)real_temp % 10) + ASCII_DIG_BASE);
     total_packet[7] = 46;
     total_packet[8] = (uint8_t) (((uint8_t)temp_decimal_vals / 10) + ASCII_DIG_BASE);
-
 }
 
 // Packs battery value into total_packet[10-13], as millivolts
@@ -1189,7 +1211,7 @@ void pack_battery_val(uint32_t batt_val, uint8_t* total_packet)
     uint32_t temp = 0;            // hold intermediate divisions of variables
     // Packing protocol for number abcd: 
     //  [... 0, 0, 0, d] --> [... 0, 0, c, d] --> ... --> [... a, b, c, d]
-    temp = batt_val;
+    temp = validate_uint_range(batt_val);
     for(int i = 13; i >= 10; i--){
         if (i == 13) total_packet[i] = (uint8_t)(temp % 10 + ASCII_DIG_BASE);
         else {
@@ -1206,7 +1228,7 @@ void pack_uncalibrated_ph_val(uint32_t ph_val, uint8_t* total_packet)
     uint32_t temp = 0;            // hold intermediate divisions of variables
     // Packing protocol for number abcd: 
     //  [... 0, 0, 0, d] --> [... 0, 0, c, d] --> ... --> [... a, b, c, d]
-    temp = ph_val;
+    temp = validate_uint_range(ph_val);
     for(int i = 18; i >= 15; i--){
         if (i == 18) total_packet[i] = (uint8_t)(temp % 10 + ASCII_DIG_BASE);
         else {
@@ -1263,7 +1285,10 @@ void read_saadc_for_regular_protocol(void)
     for (int i = 0; i < NUM_SAMPLES; i++) {
       err_code = nrfx_saadc_sample_convert(0, &temp_val);
       APP_ERROR_CHECK(err_code);
-      AVG_MV_VAL += saadc_result_to_mv(temp_val);
+      if (temp_val < 0)
+          AVG_MV_VAL += 0;
+      else
+          AVG_MV_VAL += saadc_result_to_mv(temp_val);
     }
     AVG_MV_VAL = AVG_MV_VAL / NUM_SAMPLES;
     // Assign averaged readings to the correct calibration point
