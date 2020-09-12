@@ -225,9 +225,6 @@ static volatile uint8_t write_flag=0;
 #define CAL_DONE_FILE_ID  0x4440
 #define CAL_DONE_REC_KEY  0x4441
 
-static       nrf_saadc_value_t m_buffer_pool[1][SAMPLES_IN_BUFFER];
-static       nrf_ppi_channel_t m_ppi_channel;
-
 
 // Forward declarations
 void enable_pH_voltage_reading  (void);
@@ -267,6 +264,10 @@ double mv_to_therm_resistance(uint32_t mv)
     Vtemp = (double) mv;
     therm_res = (Vtemp * R1) / (Vin - Vtemp);
 
+    // Catch invalid resistance values, set to 500 ohm if negative
+    if(therm_res < 500)
+        therm_res = 500;
+
     return therm_res;
 }
 
@@ -299,7 +300,9 @@ double calculate_celsius_from_mv(uint32_t mv)
     double kelvins   = 0;
     double celsius   = 0;
     therm_res = mv_to_therm_resistance(mv);
+    NRF_LOG_INFO("therm res: " NRF_LOG_FLOAT_MARKER "", NRF_LOG_FLOAT(therm_res));
     kelvins   = therm_resistance_to_kelvins(therm_res);
+    NRF_LOG_INFO("kelvins: " NRF_LOG_FLOAT_MARKER "", NRF_LOG_FLOAT(kelvins));
     celsius   = kelvins_to_celsius(kelvins);
 
     // Round celsius to nearest 0.1
@@ -1135,12 +1138,13 @@ double calculate_pH_from_mV(uint32_t ph_val)
 // Returns 99.9 if val is >= 100.0, returns 0.1 if val is < 0
 double validate_float_range(double val)
 {
-    if (val >= 100.0)
+    if (val > 99.9) {
         return 99.9;
-    else if (val < 0.0)
+    } else if (val < 0.0) {
         return 0.1;
-    else
+    } else {
         return val;
+    }
 }
 
 // Returns 3000 (max mV range) if val is > 3000
@@ -1201,8 +1205,9 @@ void pack_temperature_val(uint32_t temp_val, uint8_t* total_packet)
 {
     uint32_t ASCII_DIG_BASE = 48;
     double real_temp = calculate_celsius_from_mv(temp_val);
+    NRF_LOG_INFO("temp celsius pre: " NRF_LOG_FLOAT_MARKER " ", NRF_LOG_FLOAT(real_temp));
     real_temp = validate_float_range(real_temp);
-    NRF_LOG_INFO("temp celsius: " NRF_LOG_FLOAT_MARKER " \n", NRF_LOG_FLOAT(real_temp));
+    NRF_LOG_INFO("temp celsius post: " NRF_LOG_FLOAT_MARKER " \n", NRF_LOG_FLOAT(real_temp));
     double temp_decimal_vals = (real_temp - floor(real_temp)) * 100;
     total_packet[5] = (uint8_t) ((uint8_t)floor(real_temp / 10) + ASCII_DIG_BASE);
     total_packet[6] = (uint8_t) ((uint8_t)floor((uint8_t)real_temp % 10) + ASCII_DIG_BASE);
@@ -1416,7 +1421,7 @@ void single_shot_timer_handler()
     // Delay to ensure appropriate timing 
     enable_isfet_circuit();       
     // PWM output, ISFET capacitor, etc
-    nrf_delay_ms(10);              
+    nrf_delay_ms(100);              
     // Begin SAADC initialization/start
 
     /* * * * * * * * * * * * * * *
