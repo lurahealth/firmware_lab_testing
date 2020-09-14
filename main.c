@@ -207,7 +207,7 @@ double   PT2_PH_VAL        = 0;
 double   PT2_MV_VAL        = 0;
 double   PT3_PH_VAL        = 0;
 double   PT3_MV_VAL        = 0;
-double     REF_TEMP          = 0;
+double   REF_TEMP          = 0;
 int      NUM_CAL_PTS       = 0;
 float     MVAL_CALIBRATION  = 0;
 float     BVAL_CALIBRATION  = 0;
@@ -233,10 +233,10 @@ void saadc_init                 (void);
 void enable_isfet_circuit       (void);
 void disable_isfet_circuit      (void);
 void turn_chip_power_on         (void);
-void turn_chip_power_off        (void);
+void turn_chip_power_off         (void);
 void restart_saadc              (void);
 void restart_pH_interval_timer  (void);
-void write_cal_values_to_flash  (void);
+void write_cal_values_to_flash   (void);
 void linreg                     (int num, double x[], double y[]);
 void perform_calibration        (uint8_t cal_pts);
 double calculate_pH_from_mV     (uint32_t ph_val);
@@ -300,9 +300,7 @@ double calculate_celsius_from_mv(uint32_t mv)
     double kelvins   = 0;
     double celsius   = 0;
     therm_res = mv_to_therm_resistance(mv);
-    NRF_LOG_INFO("therm res: " NRF_LOG_FLOAT_MARKER "", NRF_LOG_FLOAT(therm_res));
     kelvins   = therm_resistance_to_kelvins(therm_res);
-    NRF_LOG_INFO("kelvins: " NRF_LOG_FLOAT_MARKER "", NRF_LOG_FLOAT(kelvins));
     celsius   = kelvins_to_celsius(kelvins);
 
     // Round celsius to nearest 0.1
@@ -330,6 +328,20 @@ uint32_t sensor_temp_comp(uint32_t raw_analyte_mv, uint32_t temp_mv)
     double curr_temp = calculate_celsius_from_mv(temp_mv);
     double temp_diff  = REF_TEMP - curr_temp;
     return raw_analyte_mv + round((temp_diff * TEMP_DEPENDANCE));
+}
+
+/* Takes SAADC mV reading as input and returns the actual battery
+ * voltage, recorded at time of sensor reading. Battery voltage
+ * is connected to a voltage divider with constant resistors
+ * R1 = 3M and R2 = 1M. 
+ */
+uint32_t calculate_battvoltage_from_mv(uint32_t batt_mv)
+{
+    // batt_mv = real_batt_voltage * (R2 / (R1 + R2))
+    // real_batt_voltage = batt_mv * ((R1 + R2) / R2)
+    uint32_t R1 = 3000000;
+    uint32_t R2 = 1000000;
+    return batt_mv * ((R1 + R2) / R2);
 }
 
 /**@brief Function for assert macro callback.
@@ -1223,6 +1235,7 @@ void pack_battery_val(uint32_t batt_val, uint8_t* total_packet)
     // Packing protocol for number abcd: 
     //  [... 0, 0, 0, d] --> [... 0, 0, c, d] --> ... --> [... a, b, c, d]
     temp = validate_uint_range(batt_val);
+    temp = calculate_battvoltage_from_mv(temp);
     for(int i = 13; i >= 10; i--){
         if (i == 13) total_packet[i] = (uint8_t)(temp % 10 + ASCII_DIG_BASE);
         else {
@@ -1296,11 +1309,13 @@ void read_saadc_for_regular_protocol(void)
     for (int i = 0; i < NUM_SAMPLES; i++) {
       err_code = nrfx_saadc_sample_convert(0, &temp_val);
       APP_ERROR_CHECK(err_code);
-      if (temp_val < 0)
+      if (temp_val < 0) {
           AVG_MV_VAL += 0;
-      else
+      } else {
           AVG_MV_VAL += saadc_result_to_mv(temp_val);
+      }
     }
+    if(!PH_IS_READ) {NRF_LOG_INFO("AVG MV VAL: %d", AVG_MV_VAL);}
     AVG_MV_VAL = AVG_MV_VAL / NUM_SAMPLES;
     // Assign averaged readings to the correct calibration point
     if(!PH_IS_READ){
@@ -1738,7 +1753,6 @@ int main(void)
 
     // Call function very first to turn on the chip
     turn_chip_power_on();
-    //enable_isfet_circuit();
 
     log_init();
     timers_init();
