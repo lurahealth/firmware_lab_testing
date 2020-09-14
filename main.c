@@ -201,13 +201,13 @@ bool     CAL_MODE          = false;
 bool     PT1_READ          = false;
 bool     PT2_READ          = false;
 bool     PT3_READ          = false;
-double   PT1_PH_VAL        = 0;
-double   PT1_MV_VAL        = 0;
-double   PT2_PH_VAL        = 0;
-double   PT2_MV_VAL        = 0;
-double   PT3_PH_VAL        = 0;
-double   PT3_MV_VAL        = 0;
-double   REF_TEMP          = 0;
+float   PT1_PH_VAL        = 0;
+float   PT1_MV_VAL        = 0;
+float   PT2_PH_VAL        = 0;
+float   PT2_MV_VAL        = 0;
+float   PT3_PH_VAL        = 0;
+float   PT3_MV_VAL        = 0;
+float   REF_TEMP          = 0;
 int      NUM_CAL_PTS       = 0;
 float     MVAL_CALIBRATION  = 0;
 float     BVAL_CALIBRATION  = 0;
@@ -237,10 +237,10 @@ void turn_chip_power_off         (void);
 void restart_saadc              (void);
 void restart_pH_interval_timer  (void);
 void write_cal_values_to_flash   (void);
-void linreg                     (int num, double x[], double y[]);
+void linreg                     (int num, float x[], float y[]);
 void perform_calibration        (uint8_t cal_pts);
-double calculate_pH_from_mV     (uint32_t ph_val);
-double calculate_celsius_from_mv(uint32_t mv);
+float calculate_pH_from_mV     (uint32_t ph_val);
+float calculate_celsius_from_mv(uint32_t mv);
 static void advertising_start   (bool erase_bonds);
 uint32_t saadc_result_to_mv     (uint32_t saadc_result);
 
@@ -254,14 +254,14 @@ uint32_t saadc_result_to_mv     (uint32_t saadc_result);
  */
 
 // Helper function to convert millivolts to thermistor resistance
-double mv_to_therm_resistance(uint32_t mv)
+float mv_to_therm_resistance(uint32_t mv)
 {
-    double therm_res = 0;
-    double Vtemp     = 0;
-    double R1        = 10000.0;
-    double Vin       = 1800;
+    float therm_res = 0;
+    float Vtemp     = 0;
+    float R1        = 10000.0;
+    float Vin       = 1800;
 
-    Vtemp = (double) mv;
+    Vtemp = (float) mv;
     therm_res = (Vtemp * R1) / (Vin - Vtemp);
 
     // Catch invalid resistance values, set to 500 ohm if negative
@@ -272,13 +272,13 @@ double mv_to_therm_resistance(uint32_t mv)
 }
 
 // Helper function to convert thermistor resistance to Kelvins
-double therm_resistance_to_kelvins(double therm_res)
+float therm_resistance_to_kelvins(float therm_res)
 {
-    double kelvins_constant = 273.15;
-    double ref_temp         = 25.0 + kelvins_constant;
-    double ref_resistance   = 10000.0;
-    double beta_constant    = 3380.0;
-    double real_kelvins     = 0;
+    float kelvins_constant = 273.15;
+    float ref_temp         = 25.0 + kelvins_constant;
+    float ref_resistance   = 10000.0;
+    float beta_constant    = 3380.0;
+    float real_kelvins     = 0;
 
     real_kelvins = (beta_constant * ref_temp) / 
                       (beta_constant + (ref_temp * log(therm_res/ref_resistance)));
@@ -287,18 +287,18 @@ double therm_resistance_to_kelvins(double therm_res)
 }
 
 // Helper function to convert Kelvins to Celsius
-double kelvins_to_celsius(double kelvins)
+float kelvins_to_celsius(float kelvins)
 {
-    double kelvins_constant = 273.15;
+    float kelvins_constant = 273.15;
     return kelvins - kelvins_constant;
 }
 
 // Function to fully convert temperature millivolt output to degrees celsius
-double calculate_celsius_from_mv(uint32_t mv)
+float calculate_celsius_from_mv(uint32_t mv)
 {
-    double therm_res = 0;
-    double kelvins   = 0;
-    double celsius   = 0;
+    float therm_res = 0;
+    float kelvins   = 0;
+    float celsius   = 0;
     therm_res = mv_to_therm_resistance(mv);
     kelvins   = therm_resistance_to_kelvins(therm_res);
     celsius   = kelvins_to_celsius(kelvins);
@@ -324,9 +324,9 @@ double calculate_celsius_from_mv(uint32_t mv)
  */
 uint32_t sensor_temp_comp(uint32_t raw_analyte_mv, uint32_t temp_mv)
 {
-    double TEMP_DEPENDANCE = 1.10;   // Reasonable avg. mV/C dependance between sensors
-    double curr_temp = calculate_celsius_from_mv(temp_mv);
-    double temp_diff  = REF_TEMP - curr_temp;
+    float TEMP_DEPENDANCE = 1.10;   // Reasonable avg. mV/C dependance between sensors
+    float curr_temp = calculate_celsius_from_mv(temp_mv);
+    float temp_diff  = REF_TEMP - curr_temp;
     return raw_analyte_mv + round((temp_diff * TEMP_DEPENDANCE));
 }
 
@@ -487,13 +487,13 @@ void read_saadc_and_store_avg_in_cal_pt(int samples)
     AVG_MV_VAL = AVG_MV_VAL / samples;
     // Assign averaged readings to the correct calibration point
     if(!PT1_READ){
-      PT1_MV_VAL = (double)AVG_MV_VAL;
+      PT1_MV_VAL = (float)AVG_MV_VAL;
     }
     else if (PT1_READ && !PT2_READ){
-      PT2_MV_VAL = (double)AVG_MV_VAL;
+      PT2_MV_VAL = (float)AVG_MV_VAL;
     }
     else if (PT1_READ && PT2_READ && !PT3_READ){
-       PT3_MV_VAL = (double)AVG_MV_VAL;
+       PT3_MV_VAL = (float)AVG_MV_VAL;
     }  
 }
 
@@ -573,8 +573,8 @@ void perform_calibration(uint8_t cal_pts)
   if (cal_pts == 1) {
     // Compare mV for pH value to mV calculated for same pH with current M & B values,
     // then adjust B value by the difference in mV values (shift intercept of line)
-    double incorrect_pH  = calculate_pH_from_mV((uint32_t)PT1_MV_VAL);
-    double cal_adjustment = PT1_PH_VAL - incorrect_pH;
+    float incorrect_pH  = calculate_pH_from_mV((uint32_t)PT1_MV_VAL);
+    float cal_adjustment = PT1_PH_VAL - incorrect_pH;
     BVAL_CALIBRATION = BVAL_CALIBRATION + cal_adjustment;
     NRF_LOG_INFO("MVAL: " NRF_LOG_FLOAT_MARKER " ", NRF_LOG_FLOAT(MVAL_CALIBRATION));
     NRF_LOG_INFO("BVAL: " NRF_LOG_FLOAT_MARKER " ", NRF_LOG_FLOAT(BVAL_CALIBRATION));
@@ -582,14 +582,14 @@ void perform_calibration(uint8_t cal_pts)
   }
   else if (cal_pts == 2) {
     // Create arrays of pH value and corresponding mV values (change all line properties)
-    double x_vals[] = {PT1_MV_VAL, PT2_MV_VAL};
-    double y_vals[] = {PT1_PH_VAL, PT2_PH_VAL};
+    float x_vals[] = {PT1_MV_VAL, PT2_MV_VAL};
+    float y_vals[] = {PT1_PH_VAL, PT2_PH_VAL};
     linreg(cal_pts, x_vals, y_vals);
   }
   else if (cal_pts == 3) {
     // Create arrays of pH value and corresponding mV values (change all line properties)
-    double x_vals[] = {PT1_MV_VAL, PT2_MV_VAL, PT3_MV_VAL};
-    double y_vals[] = {PT1_PH_VAL, PT2_PH_VAL, PT3_PH_VAL};
+    float x_vals[] = {PT1_MV_VAL, PT2_MV_VAL, PT3_MV_VAL};
+    float y_vals[] = {PT1_PH_VAL, PT2_PH_VAL, PT3_PH_VAL};
     linreg(cal_pts, x_vals, y_vals);
   }
 }
@@ -1141,14 +1141,14 @@ void restart_saadc(void)
 }
 
 // Returns pH value from mV reading using calibration values
-double calculate_pH_from_mV(uint32_t ph_val)
+float calculate_pH_from_mV(uint32_t ph_val)
 {
     // pH = (ph_val - BVAL_CALIBRATION) / (MVAL_CALIBRATION)
-    return ((double)ph_val * MVAL_CALIBRATION) + BVAL_CALIBRATION;
+    return ((float)ph_val * MVAL_CALIBRATION) + BVAL_CALIBRATION;
 }
 
 // Returns 99.9 if val is >= 100.0, returns 0.1 if val is < 0
-double validate_float_range(double val)
+float validate_float_range(float val)
 {
     if (val > 99.9) {
         return 99.9;
@@ -1185,9 +1185,9 @@ void pack_calibrated_ph_val(uint32_t ph_val, uint32_t temp_val, uint8_t* total_p
     // If calibration has been performed, store real pH in [0-3],
     // and store the raw millivolt data in the last field [15-18]
     else if (CAL_PERFORMED) {
-      double real_pH  = calculate_pH_from_mV(sensor_temp_comp(ph_val, temp_val));
+      float real_pH  = calculate_pH_from_mV(sensor_temp_comp(ph_val, temp_val));
       real_pH = validate_float_range(real_pH);
-      double pH_decimal_vals = (real_pH - floor(real_pH)) * 100;
+      float pH_decimal_vals = (real_pH - floor(real_pH)) * 100;
       // Round pH values to 0.25 pH accuracy
       pH_decimal_vals = round(pH_decimal_vals / 25) * 25;
       // If decimals round to 100, increment real pH value and set decimals to 0.00
@@ -1216,11 +1216,11 @@ void pack_calibrated_ph_val(uint32_t ph_val, uint32_t temp_val, uint8_t* total_p
 void pack_temperature_val(uint32_t temp_val, uint8_t* total_packet)
 {
     uint32_t ASCII_DIG_BASE = 48;
-    double real_temp = calculate_celsius_from_mv(temp_val);
+    float real_temp = calculate_celsius_from_mv(temp_val);
     NRF_LOG_INFO("temp celsius pre: " NRF_LOG_FLOAT_MARKER " ", NRF_LOG_FLOAT(real_temp));
     real_temp = validate_float_range(real_temp);
     NRF_LOG_INFO("temp celsius post: " NRF_LOG_FLOAT_MARKER " \n", NRF_LOG_FLOAT(real_temp));
-    double temp_decimal_vals = (real_temp - floor(real_temp)) * 100;
+    float temp_decimal_vals = (real_temp - floor(real_temp)) * 100;
     total_packet[5] = (uint8_t) ((uint8_t)floor(real_temp / 10) + ASCII_DIG_BASE);
     total_packet[6] = (uint8_t) ((uint8_t)floor((uint8_t)real_temp % 10) + ASCII_DIG_BASE);
     total_packet[7] = 46;
@@ -1482,20 +1482,20 @@ void gatt_init(void)
 }
 
 // Helper function for linreg
-inline static double sqr(double x) {
+inline static float sqr(float x) {
     return x*x;
 }
 
 /*
  * Function for running linear regression on two and three point calibration data
  */
-void linreg(int num, double x[], double y[])
+void linreg(int num, float x[], float y[])
 {
-    double   sumx  = 0.0;                     /* sum of x     */
-    double   sumx2 = 0.0;                     /* sum of x**2  */
-    double   sumxy = 0.0;                     /* sum of x * y */
-    double   sumy  = 0.0;                     /* sum of y     */
-    double   sumy2 = 0.0;                     /* sum of y**2  */
+    float   sumx  = 0.0;                     /* sum of x     */
+    float   sumx2 = 0.0;                     /* sum of x**2  */
+    float   sumxy = 0.0;                     /* sum of x * y */
+    float   sumy  = 0.0;                     /* sum of y     */
+    float   sumy2 = 0.0;                     /* sum of y**2  */
 
     for (int i=0;i<num;i++){ 
         sumx  += x[i];       
@@ -1505,7 +1505,7 @@ void linreg(int num, double x[], double y[])
         sumy2 += sqr(y[i]); 
     } 
 
-    double denom = (num * sumx2 - sqr(sumx));
+    float denom = (num * sumx2 - sqr(sumx));
 
     if (denom == 0) {
         // singular matrix. can't solve the problem.
