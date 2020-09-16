@@ -483,6 +483,7 @@ void read_saadc_and_store_avg_in_cal_pt(int samples)
           AVG_MV_VAL += 0;
       else
           AVG_MV_VAL += saadc_result_to_mv(temp_val);
+      nrf_delay_us(10);
     }
     AVG_MV_VAL = AVG_MV_VAL / samples;
     // Assign averaged readings to the correct calibration point
@@ -510,6 +511,7 @@ void read_saadc_and_set_ref_temp(int samples)
           AVG_MV_VAL += 0;
       else
           AVG_MV_VAL += saadc_result_to_mv(temp_val);
+      nrf_delay_us(10);
     }
     AVG_MV_VAL = AVG_MV_VAL / samples;
     if (!PT1_READ) {
@@ -1314,6 +1316,7 @@ void read_saadc_for_regular_protocol(void)
       } else {
           AVG_MV_VAL += saadc_result_to_mv(temp_val);
       }
+      nrf_delay_us(10);
     }
     if(!PH_IS_READ) {NRF_LOG_INFO("AVG MV VAL: %d", AVG_MV_VAL);}
     AVG_MV_VAL = AVG_MV_VAL / NUM_SAMPLES;
