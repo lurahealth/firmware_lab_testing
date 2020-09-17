@@ -146,8 +146,6 @@
 #define SEC_PARAM_MIN_KEY_SIZE          7                                           /**< Minimum encryption key size. */
 #define SEC_PARAM_MAX_KEY_SIZE          16                                          /**< Maximum encryption key size. */
 
-#define SAMPLES_IN_BUFFER               50                                          /**< SAADC buffer > */
-
 #define DATA_INTERVAL                   1000
 
 
@@ -157,12 +155,19 @@
     .resistor_n = NRF_SAADC_RESISTOR_DISABLED,      \
     .gain       = NRF_SAADC_GAIN1_5,                \
     .reference  = NRF_SAADC_REFERENCE_INTERNAL,     \
-    .acq_time   = NRF_SAADC_ACQTIME_10US,           \
+    .acq_time   = NRF_SAADC_ACQTIME_20US,           \
     .mode       = NRF_SAADC_MODE_SINGLE_ENDED,      \
     .burst      = NRF_SAADC_BURST_DISABLED,         \
     .pin_p      = (nrf_saadc_input_t)(PIN_P),       \
     .pin_n      = NRF_SAADC_INPUT_DISABLED          \
 }
+
+#define PACKET_FLOAT_MARKER "%s%d.%1d"
+#define PACKET_RVAL_MARKER "%s%d.%3d"
+#define LOG_PACKET_FLOAT(val, dec) (uint32_t)(((val) < 0 && (val) > -1.0) ? "-" : ""),   \
+                                  (int32_t)(val),                                       \
+                                  (int32_t)((((val) > 0) ? (val) - (int32_t)(val)       \
+                                              : (int32_t)(val) - (val))*pow(10,dec))
 
 /* UNDEFS FOR DEBUGGING */
 #undef RX_PIN_NUMBER
@@ -201,13 +206,14 @@ bool     CAL_MODE          = false;
 bool     PT1_READ          = false;
 bool     PT2_READ          = false;
 bool     PT3_READ          = false;
-float   PT1_PX_VAL        = 0;
-float   PT1_MV_VAL        = 0;
-float   PT2_PX_VAL        = 0;
-float   PT2_MV_VAL        = 0;
-float   PT3_PX_VAL        = 0;
-float   PT3_MV_VAL        = 0;
-float   REF_TEMP          = 0;
+float     PT1_PX_VAL        = 0;
+float     PT1_MV_VAL        = 0;
+float     PT2_PX_VAL        = 0;
+float     PT2_MV_VAL        = 0;
+float     PT3_PX_VAL        = 0;
+float     PT3_MV_VAL        = 0;
+float     REF_TEMP          = 0;
+float     CURR_TEMP         = 0;
 int      NUM_CAL_PTS       = 0;
 float     MVAL_CALIBRATION  = 0;
 float     BVAL_CALIBRATION  = 0;
@@ -225,9 +231,6 @@ static volatile uint8_t write_flag=0;
 #define CAL_DONE_FILE_ID  0x4440
 #define CAL_DONE_REC_KEY  0x4441
 
-static       nrf_saadc_value_t m_buffer_pool[1][SAMPLES_IN_BUFFER];
-static       nrf_ppi_channel_t m_ppi_channel;
-
 
 // Forward declarations
 void enable_px_voltage_reading  (void);
@@ -244,6 +247,7 @@ void linreg                     (int num, float x[], float y[]);
 void perform_calibration        (uint8_t cal_pts);
 float calculate_px_from_mV       (uint32_t px_val);
 float calculate_celsius_from_mv  (uint32_t mv);
+float validate_float_range        (float val);
 static void advertising_start   (bool erase_bonds);
 uint32_t saadc_result_to_mv     (uint32_t saadc_result);
 
@@ -535,16 +539,22 @@ void read_saadc_and_set_ref_temp(int samples)
     }
     AVG_MV_VAL = AVG_MV_VAL / samples;
     if (!PT1_READ) {
-        REF_TEMP = calculate_celsius_from_mv(AVG_MV_VAL);
+        CURR_TEMP = calculate_celsius_from_mv(AVG_MV_VAL);
+        CURR_TEMP = validate_float_range(CURR_TEMP); 
+        REF_TEMP  = CURR_TEMP;
         PT1_READ = true;
     }
     else if (PT1_READ && !PT2_READ) {
-        REF_TEMP = REF_TEMP + calculate_celsius_from_mv(AVG_MV_VAL);
+        CURR_TEMP = calculate_celsius_from_mv(AVG_MV_VAL);
+        CURR_TEMP = validate_float_range(CURR_TEMP); 
+        REF_TEMP = REF_TEMP + CURR_TEMP;
         if (NUM_CAL_PTS == 2) {REF_TEMP = REF_TEMP / 2.0;}
         PT2_READ = true;
     }
     else if (PT1_READ && PT2_READ && !PT3_READ) {
-       REF_TEMP = REF_TEMP + calculate_celsius_from_mv(AVG_MV_VAL);
+       CURR_TEMP = calculate_celsius_from_mv(AVG_MV_VAL);
+       CURR_TEMP = validate_float_range(CURR_TEMP); 
+       REF_TEMP = REF_TEMP + CURR_TEMP;
        REF_TEMP = REF_TEMP / 3.0;
        PT3_READ = true;
     }
@@ -614,6 +624,47 @@ void perform_calibration(uint8_t cal_pts)
   }
 }
 
+/* Packs the mV value and temperature reading recorded for the current
+ * calibration point into the confirmation packet
+ */
+void pack_cal_values_into_confirm_packet(char confirm_packet[3][24], int cal_pt) {
+      // Pack packet depending on calibration point
+      if (cal_pt == 1)
+          sprintf(confirm_packet[cal_pt-1], "PT1CONF %u mV, " PACKET_FLOAT_MARKER " C\n", 
+                                           (uint32_t)PT1_MV_VAL, LOG_PACKET_FLOAT(CURR_TEMP,1));
+      else if (cal_pt == 2)
+          sprintf(confirm_packet[cal_pt-1], "PT2CONF %u mV, " PACKET_FLOAT_MARKER " C\n", 
+                                           (uint32_t)PT2_MV_VAL, LOG_PACKET_FLOAT(CURR_TEMP,1));
+      else if (cal_pt == 3)
+          sprintf(confirm_packet[cal_pt-1], "PT3CONF %u mV, " PACKET_FLOAT_MARKER " C\n", 
+                                           (uint32_t)PT3_MV_VAL, LOG_PACKET_FLOAT(CURR_TEMP,1));
+}
+
+/* Packs the results of calibration into a packet, including M and B values from
+ * Y = Mx + B, the R^2 accuracy of the linear regression, and the reference temp.
+ *
+ * When converting mV to analyte values, this application uses an calibration 
+ * with units such that M is "pX / mV" and B is pX. This packing function coverts 
+ * M to "mV / pX" and B to mV, as these are the most useful values to the user
+ */
+void pack_lin_reg_values_into_packet(char report_packet[45], uint16_t *pack_len)
+{
+    uint16_t len = 0;
+    for (int i = 0; i < 45; i++) {report_packet[i] = 0;}
+    sprintf(report_packet, "M=" PACKET_FLOAT_MARKER ", B=" PACKET_FLOAT_MARKER ", "
+                           "R=" PACKET_RVAL_MARKER ", C=" PACKET_FLOAT_MARKER " \n", 
+                                    LOG_PACKET_FLOAT(1.0/MVAL_CALIBRATION,1),        
+                                    LOG_PACKET_FLOAT(BVAL_CALIBRATION/MVAL_CALIBRATION*-1,1),   
+                                    LOG_PACKET_FLOAT(fabs(RVAL_CALIBRATION),3),      
+                                    LOG_PACKET_FLOAT(REF_TEMP,1));
+   for (int i = 0; i < 45; i++) {
+      if (report_packet[i] > 0)
+        len++;
+   }
+   report_packet[len] = '\n';
+   *pack_len = len+2;
+}
+
 /*
  * Checks packet contents to appropriately perform calibration
  */
@@ -624,11 +675,13 @@ void check_for_calibration(char **packet)
     char *PWROFF    = "PWROFF";
     char *PT        = "PT";
     // Possible strings to send to mobile application
-    char *CALBEGIN = "CALBEGIN";
-    char PT_CONFS[3][8] = {"PT1CONF", "PT2CONF", "PT3CONF"};
+    char CALBEGIN[9] = {"CALBEGIN\n"};   
+    char CALRESULTS[45];
+    char PT_CONFS[3][24];
     // Variables to hold sizes of strings for ble_nus_send function
     uint16_t SIZE_BEGIN = 9;
-    uint16_t SIZE_CONF  = 8;
+    uint16_t SIZE_CONF  = 24;
+    uint16_t SIZE_RESULTS;
     uint32_t err_code;
 
     if (strstr(*packet, PWROFF) != NULL){
@@ -665,12 +718,19 @@ void check_for_calibration(char **packet)
             PT3_PX_VAL = mmol_per_L_to_px(atof(px_val_substring));
         // Read calibration data and send confirmation packet
         read_saadc_for_calibration();
+        pack_cal_values_into_confirm_packet(PT_CONFS, cal_pt);
         err_code = ble_nus_data_send(&m_nus, PT_CONFS[cal_pt - 1], 
                                      &SIZE_CONF, m_conn_handle);
         APP_ERROR_CHECK(err_code);
         // Restart normal data transmission if calibration is complete
         if (NUM_CAL_PTS == cal_pt) {
           perform_calibration(cal_pt);
+          pack_lin_reg_values_into_packet(CALRESULTS, &SIZE_RESULTS);
+          NRF_LOG_INFO("length: %u", SIZE_RESULTS);
+          for(int i = 0; i < SIZE_RESULTS; i++) {
+              NRF_LOG_INFO("%c", CALRESULTS[i]);
+          }
+          err_code = ble_nus_data_send(&m_nus, CALRESULTS, &SIZE_RESULTS, m_conn_handle);
           write_cal_values_to_flash();
           reset_calibration_state();
           restart_px_interval_timer();
@@ -1299,15 +1359,19 @@ void read_saadc_for_regular_protocol(void)
       APP_ERROR_CHECK(err_code);
       if (temp_val < 0) {
           AVG_MV_VAL += 0;
+          if (!PX_IS_READ) {NRF_LOG_INFO("*** ZERO SAADC READ ***");}
       } else {
           AVG_MV_VAL += saadc_result_to_mv(temp_val);
+          if (!PX_IS_READ) {NRF_LOG_INFO("%u, saadc: %u", saadc_result_to_mv(temp_val), temp_val);}
       }
+      if (i == NUM_SAMPLES) {NRF_LOG_INFO("150 samples read"); NRF_LOG_FLUSH(); NRF_LOG_INFO("total mv: %u", AVG_MV_VAL);}
       nrf_delay_us(10);
     }
     AVG_MV_VAL = AVG_MV_VAL / NUM_SAMPLES;
     // Assign averaged readings to the correct calibration point
     if(!PX_IS_READ){
       AVG_PX_VAL = AVG_MV_VAL;
+      NRF_LOG_FLUSH();
       NRF_LOG_INFO("read px val, restarting: %d", AVG_PX_VAL);
       NRF_LOG_FLUSH();
       PX_IS_READ = true;
@@ -1741,7 +1805,6 @@ int main(void)
 
     // Call function very first to turn on the chip
     turn_chip_power_on();
-    //enable_isfet_circuit();
 
     log_init();
     timers_init();
