@@ -1107,7 +1107,7 @@ void enable_tmux(void)
     nrf_drv_gpiote_out_init(TMUX_A0_PIN, &config);
     nrf_drv_gpiote_out_init(TMUX_A1_PIN, &config);
     
-    nrf_drv_gpiote_out_set(ENABLE_ISFET_PIN); 
+    nrf_drv_gpiote_out_set(ENABLE_TMUX_PIN); 
 }
 
 void disable_tmux(void)
@@ -1468,7 +1468,7 @@ void saadc_init(void)
             read_indicating_electrode_two();
         else
             read_indicating_electrode_three();
-        nrf_delay_ms(1);
+        nrf_delay_ms(100);
     }
     // Read battery after sensor analytes
     else if (!BATTERY_IS_READ) {
@@ -1529,7 +1529,7 @@ void single_shot_timer_handler()
     // Delay to ensure appropriate timing 
     enable_isfet_circuit();       
     // PWM output, ISFET capacitor, etc
-    nrf_delay_ms(10);              
+    nrf_delay_ms(1000);              
     // Begin SAADC initialization/start
 
     /* * * * * * * * * * * * * * *
