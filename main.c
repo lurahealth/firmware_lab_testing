@@ -1114,24 +1114,31 @@ void disable_tmux(void)
 {
     nrf_drv_gpiote_out_clear(ENABLE_TMUX_PIN);
     nrf_drv_gpiote_out_clear(TMUX_A0_PIN);
-    nrf_drv_gpiote_out_clear(TMUX_A1_PIN);    
+    nrf_drv_gpiote_out_clear(TMUX_A1_PIN); 
+       
+    nrf_drv_gpiote_out_uninit(ENABLE_TMUX_PIN);
+    nrf_drv_gpiote_out_uninit(TMUX_A0_PIN);
+    nrf_drv_gpiote_out_uninit(TMUX_A1_PIN);
 }
 
+/* Reads from channel S1 of TMUX */
 void read_indicating_electrode_one(void)
 {
     nrf_drv_gpiote_out_clear(TMUX_A0_PIN);
     nrf_drv_gpiote_out_clear(TMUX_A1_PIN);
 }
 
+/* Reads from channel S3 of TMUX */
 void read_indicating_electrode_two(void)
 {
-    nrf_drv_gpiote_out_set(TMUX_A0_PIN);
-    nrf_drv_gpiote_out_clear(TMUX_A1_PIN);
+    nrf_drv_gpiote_out_clear(TMUX_A0_PIN);
+    nrf_drv_gpiote_out_set(TMUX_A1_PIN);
 }
 
+/* Reads from channel S4 of TMUX */
 void read_indicating_electrode_three(void)
 {
-    nrf_drv_gpiote_out_clear(TMUX_A0_PIN);
+    nrf_drv_gpiote_out_set(TMUX_A0_PIN);
     nrf_drv_gpiote_out_set(TMUX_A1_PIN);
 }
 
@@ -1528,8 +1535,7 @@ void single_shot_timer_handler()
 
     // Delay to ensure appropriate timing 
     enable_isfet_circuit();       
-    // PWM output, ISFET capacitor, etc
-    nrf_delay_ms(1000);              
+        
     // Begin SAADC initialization/start
 
     /* * * * * * * * * * * * * * *
