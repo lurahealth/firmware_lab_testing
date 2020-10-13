@@ -277,6 +277,8 @@ float mv_to_therm_resistance(uint32_t mv)
     if(therm_res < 500)
         therm_res = 500;
 
+    NRF_LOG_INFO("therm res: " NRF_LOG_FLOAT_MARKER" \n", NRF_LOG_FLOAT(therm_res));
+
     return therm_res;
 }
 
@@ -526,11 +528,13 @@ void read_saadc_and_set_ref_temp(int samples)
     if (!PT1_READ) {
         CURR_TEMP = calculate_celsius_from_mv(AVG_MV_VAL);
         CURR_TEMP = validate_float_range(CURR_TEMP); 
+        NRF_LOG_INFO("temp mv: %u\n", AVG_MV_VAL);
         NRF_LOG_INFO("CURR_TEMP: " NRF_LOG_FLOAT_MARKER " \n", NRF_LOG_FLOAT(CURR_TEMP));
         REF_TEMP  = CURR_TEMP;
         PT1_READ  = true;
     }
     else if (PT1_READ && !PT2_READ) {
+        NRF_LOG_INFO("temp mv: %u\n", AVG_MV_VAL);
         CURR_TEMP = calculate_celsius_from_mv(AVG_MV_VAL);
         CURR_TEMP = validate_float_range(CURR_TEMP); 
         REF_TEMP = REF_TEMP + CURR_TEMP;
@@ -538,6 +542,7 @@ void read_saadc_and_set_ref_temp(int samples)
         PT2_READ = true;
     }
     else if (PT1_READ && PT2_READ && !PT3_READ) {
+        NRF_LOG_INFO("temp mv: %u\n", AVG_MV_VAL);
         CURR_TEMP = calculate_celsius_from_mv(AVG_MV_VAL);
         CURR_TEMP = validate_float_range(CURR_TEMP); 
         REF_TEMP = REF_TEMP + CURR_TEMP;
@@ -558,13 +563,16 @@ void read_saadc_for_calibration(void)
     
     // Reset SAADC state before taking first calibration point
     if (!PT1_READ) {disable_pH_voltage_reading();}
+    enable_isfet_circuit();   
+    nrf_delay_ms(100);
     enable_pH_voltage_reading();
     read_saadc_and_store_avg_in_cal_pt(NUM_SAMPLES);   
     // Reset saadc to read temperature value
-    disable_pH_voltage_reading();
+    //disable_pH_voltage_reading();
     PH_IS_READ = true;
     BATTERY_IS_READ = true; // Work around to read temperature values
-    enable_pH_voltage_reading();
+    //enable_pH_voltage_reading();
+    restart_saadc();
     read_saadc_and_set_ref_temp(NUM_SAMPLES);
     disable_pH_voltage_reading();
 }
