@@ -277,6 +277,9 @@ float mv_to_therm_resistance(uint32_t mv)
     if(therm_res < 500)
         therm_res = 500;
 
+    if(mv > 1650)
+        therm_res = 420;
+
     NRF_LOG_INFO("therm res: " NRF_LOG_FLOAT_MARKER" \n", NRF_LOG_FLOAT(therm_res));
 
     return therm_res;
@@ -1245,50 +1248,6 @@ uint32_t validate_uint_range(uint32_t val)
         return val;
 }
 
-/* Packs calibrated pH value into total_packet[0-3], rounded to nearest 0.25 pH.
- * Also compensates pH mv reading for ISFET temp dependance before calculating
- * pH value
- */
-void pack_calibrated_ph_val(uint32_t ph_val, uint32_t temp_val, uint8_t* total_packet)
-{
-    uint32_t ASCII_DIG_BASE = 48;
-    // If calibration has not been performed, store 0000 in real pH field [0-3],
-    // and store the raw SAADC data in the last field [15-18]
-    if (!CAL_PERFORMED) {
-      for(int i = 3; i >= 0; i--){
-        total_packet[i] = 0 + ASCII_DIG_BASE;
-      }
-    }
-    // If calibration has been performed, store real pH in [0-3],
-    // and store the raw millivolt data in the last field [15-18]
-    else if (CAL_PERFORMED) {
-      float real_pH  = calculate_pH_from_mV(sensor_temp_comp(ph_val, temp_val));
-      real_pH = validate_float_range(real_pH);
-      float pH_decimal_vals = (real_pH - floor(real_pH)) * 100;
-      // Round pH values to 0.25 pH accuracy
-      pH_decimal_vals = round(pH_decimal_vals / 25) * 25;
-      // If decimals round to 100, increment real pH value and set decimals to 0.00
-      if (pH_decimal_vals == 100) {
-        real_pH = real_pH + 1.0;
-        pH_decimal_vals = 0.00;
-      }
-      // If pH is 9.99 or lower, format with 2 decimal places (4 bytes total)
-      if (real_pH < 10.0) {
-        total_packet[0] = (uint8_t) ((uint8_t)floor(real_pH) + ASCII_DIG_BASE);
-        total_packet[1] = 46;
-        total_packet[2] = (uint8_t) (((uint8_t)pH_decimal_vals / 10) + ASCII_DIG_BASE);
-        total_packet[3] = (uint8_t) (((uint8_t)pH_decimal_vals % 10) + ASCII_DIG_BASE);
-      }
-      // If pH is 10.0 or greater, format with 1 decimal place (still 4 bytes total)
-      else {
-        total_packet[0] = (uint8_t) ((uint8_t)floor(real_pH / 10) + ASCII_DIG_BASE);
-        total_packet[1] = (uint8_t) ((uint8_t)floor((uint8_t)real_pH % 10) + ASCII_DIG_BASE);
-        total_packet[2] = 46;
-        total_packet[3] = (uint8_t) (((uint8_t)pH_decimal_vals / 10) + ASCII_DIG_BASE);
-      }
-    }
-}
-
 // Packs temperature value into total_packet[5-8], as degrees Celsius
 void pack_temperature_val(uint32_t temp_val, uint8_t* total_packet)
 {
@@ -1298,10 +1257,10 @@ void pack_temperature_val(uint32_t temp_val, uint8_t* total_packet)
     real_temp = validate_float_range(real_temp);
     NRF_LOG_INFO("temp celsius post: " NRF_LOG_FLOAT_MARKER " \n", NRF_LOG_FLOAT(real_temp));
     float temp_decimal_vals = (real_temp - floor(real_temp)) * 100;
-    total_packet[5] = (uint8_t) ((uint8_t)floor(real_temp / 10) + ASCII_DIG_BASE);
-    total_packet[6] = (uint8_t) ((uint8_t)floor((uint8_t)real_temp % 10) + ASCII_DIG_BASE);
-    total_packet[7] = 46;
-    total_packet[8] = (uint8_t) (((uint8_t)temp_decimal_vals / 10) + ASCII_DIG_BASE);
+    total_packet[0] = (uint8_t) ((uint8_t)floor(real_temp / 10) + ASCII_DIG_BASE);
+    total_packet[1] = (uint8_t) ((uint8_t)floor((uint8_t)real_temp % 10) + ASCII_DIG_BASE);
+    total_packet[2] = 46;
+    total_packet[3] = (uint8_t) (((uint8_t)temp_decimal_vals / 10) + ASCII_DIG_BASE);
 }
 
 // Packs battery value into total_packet[10-13], as millivolts
@@ -1313,8 +1272,8 @@ void pack_battery_val(uint32_t batt_val, uint8_t* total_packet)
     //  [... 0, 0, 0, d] --> [... 0, 0, c, d] --> ... --> [... a, b, c, d]
     temp = validate_uint_range(batt_val);
     temp = calculate_battvoltage_from_mv(temp);
-    for(int i = 13; i >= 10; i--){
-        if (i == 13) total_packet[i] = (uint8_t)(temp % 10 + ASCII_DIG_BASE);
+    for(int i = 8; i >= 5; i--){
+        if (i == 8) total_packet[i] = (uint8_t)(temp % 10 + ASCII_DIG_BASE);
         else {
             temp = temp / 10;
             total_packet[i] = (uint8_t)(temp % 10 + ASCII_DIG_BASE);
@@ -1322,22 +1281,6 @@ void pack_battery_val(uint32_t batt_val, uint8_t* total_packet)
     }
 }
 
-// Packs uncalibrated pH value into total_packet[15-18], as millivolts
-void pack_uncalibrated_ph_val(uint32_t ph_val, uint8_t* total_packet)
-{
-    uint32_t ASCII_DIG_BASE = 48;
-    uint32_t temp = 0;            // hold intermediate divisions of variables
-    // Packing protocol for number abcd: 
-    //  [... 0, 0, 0, d] --> [... 0, 0, c, d] --> ... --> [... a, b, c, d]
-    temp = validate_uint_range(ph_val);
-    for(int i = 18; i >= 15; i--){
-        if (i == 18) total_packet[i] = (uint8_t)(temp % 10 + ASCII_DIG_BASE);
-        else {
-            temp = temp / 10;
-            total_packet[i] = (uint8_t)(temp % 10 + ASCII_DIG_BASE);
-        }
-    }
-}
 
 // Pack values into byte array to send via bluetooth
 void create_bluetooth_packet(uint32_t ph_val,
@@ -1352,10 +1295,8 @@ void create_bluetooth_packet(uint32_t ph_val,
          0 0 0 0,10};   raw pH value arr[15-18], EOL arr[19]
     */
       
-    pack_calibrated_ph_val(ph_val, temp_val, total_packet);
     pack_temperature_val(temp_val, total_packet);
     pack_battery_val(batt_val, total_packet);
-    pack_uncalibrated_ph_val(ph_val, total_packet);   
 }
 
 uint32_t saadc_result_to_mv(uint32_t saadc_result)
@@ -1371,13 +1312,11 @@ uint32_t saadc_result_to_mv(uint32_t saadc_result)
 // Read saadc values for temperature, battery level, and pH using blocking
 void read_saadc_for_regular_protocol(void) 
 {
-    uint16_t   total_size = 20;
+    uint16_t   total_size = 10;
     uint32_t   avg_saadc_reading = 0;
     // Byte array to store total packet
-    uint8_t total_packet[] = {48,48,48,48,44,    /* real pH value, comma */
-                              48,48,48,48,44,    /* Temperature, comma */
-                              48,48,48,48,44,    /* Battery value, comma */
-                              48,48,48,48,10};   /* raw pH value, EOL */
+    uint8_t total_packet[] = {48,48,48,48,44,    /* Temperature, comma */
+                              48,48,48,48,10};   /* Battery value, EOL */
     int NUM_SAMPLES = 150;
     nrf_saadc_value_t temp_val = 0;
     ret_code_t err_code;
@@ -1393,17 +1332,9 @@ void read_saadc_for_regular_protocol(void)
       }
       nrf_delay_us(10);
     }
-    if(!PH_IS_READ) {NRF_LOG_INFO("AVG MV VAL: %d", AVG_MV_VAL);}
+
     AVG_MV_VAL = AVG_MV_VAL / NUM_SAMPLES;
-    // Assign averaged readings to the correct calibration point
-    if(!PH_IS_READ){
-      AVG_PH_VAL = AVG_MV_VAL;
-      NRF_LOG_INFO("read pH val, restarting: %d", AVG_PH_VAL);
-      NRF_LOG_FLUSH();
-      PH_IS_READ = true;
-      restart_saadc();
-    }
-    else if (!(PH_IS_READ && BATTERY_IS_READ)){
+    if (!BATTERY_IS_READ){
       AVG_BATT_VAL = AVG_MV_VAL;
       NRF_LOG_INFO("read batt val, restarting: %d", AVG_BATT_VAL);
       NRF_LOG_FLUSH();
@@ -1455,10 +1386,7 @@ void saadc_init(void)
 {
     nrf_saadc_input_t ANALOG_INPUT;
     // Change pin depending on global control boolean
-    if (!PH_IS_READ) {
-        ANALOG_INPUT = NRF_SAADC_INPUT_AIN2;
-    }
-    else if (!(PH_IS_READ && BATTERY_IS_READ)) {
+    if (!BATTERY_IS_READ) {
         ANALOG_INPUT = NRF_SAADC_INPUT_AIN3;
     }
     else {
@@ -1514,7 +1442,7 @@ void single_shot_timer_handler()
     // Delay to ensure appropriate timing 
     enable_isfet_circuit();       
     // PWM output, ISFET capacitor, etc
-    nrf_delay_ms(100);              
+    nrf_delay_ms(25);              
     // Begin SAADC initialization/start
 
     /* * * * * * * * * * * * * * *
