@@ -686,6 +686,8 @@ void check_for_calibration(char **packet)
     if (strstr(*packet, PWROFF) != NULL){
         NRF_LOG_INFO("received pwroff\n");
         nrfx_gpiote_out_clear(CHIP_POWER_PIN);
+        nrfx_gpiote_out_uninit(CHIP_POWER_PIN);
+        nrfx_gpiote_uninit();
     }
 
     if (strstr(*packet, STARTCAL) != NULL) {
