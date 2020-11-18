@@ -971,8 +971,10 @@ static void ble_evt_handler(ble_evt_t const * p_ble_evt, void * p_context)
             NRF_SAADC->INTENCLR = (SAADC_INTENCLR_END_Clear << SAADC_INTENCLR_END_Pos);  
             NVIC_ClearPendingIRQ(SAADC_IRQn);
             disable_isfet_circuit();
-            // restart advertising
-            advertising_start(false);
+            // Power off
+            nrfx_gpiote_out_clear(CHIP_POWER_PIN);
+            nrfx_gpiote_out_uninit(CHIP_POWER_PIN);
+            nrfx_gpiote_uninit();
 
             break;
 
