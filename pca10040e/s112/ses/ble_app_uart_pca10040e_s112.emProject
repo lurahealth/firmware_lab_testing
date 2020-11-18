@@ -46,7 +46,6 @@
       <file file_name="../../../../../../components/libraries/util/app_error.c" />
       <file file_name="../../../../../../components/libraries/util/app_error_handler_gcc.c" />
       <file file_name="../../../../../../components/libraries/util/app_error_weak.c" />
-      <file file_name="../../../../../../components/libraries/fifo/app_fifo.c" />
       <file file_name="../../../../../../components/libraries/scheduler/app_scheduler.c" />
       <file file_name="../../../../../../components/libraries/timer/app_timer.c" />
       <file file_name="../../../../../../components/libraries/uart/app_uart_fifo.c" />
@@ -66,6 +65,7 @@
       <file file_name="../../../../../../components/libraries/strerror/nrf_strerror.c" />
       <file file_name="../../../../../../components/libraries/uart/retarget.c" />
       <file file_name="../../../../../../components/libraries/fstorage/nrf_fstorage_sd.c" />
+      <file file_name="../../../../../../components/libraries/fifo/app_fifo.c" />
     </folder>
     <folder Name="None">
       <file file_name="../../../../../../modules/nrfx/mdk/ses_startup_nrf52810.s" />

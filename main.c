@@ -122,7 +122,7 @@
 
 #define APP_ADV_INTERVAL                510                                         /**< The advertising interval (in units of 0.625 ms. This value corresponds to 40 ms). */
 
-#define APP_ADV_DURATION                18000                                       /**< The advertising duration (180 seconds) in units of 10 milliseconds. */
+#define APP_ADV_DURATION                1500                                       /**< The advertising duration (180 seconds) in units of 10 milliseconds. */
 
 #define MIN_CONN_INTERVAL               MSEC_TO_UNITS(20, UNIT_1_25_MS)             /**< Minimum acceptable connection interval (20 ms), Connection interval uses 1.25 ms units. */
 #define MAX_CONN_INTERVAL               MSEC_TO_UNITS(200, UNIT_1_25_MS)             /**< Maximum acceptable connection interval (200 ms), Connection interval uses 1.25 ms units. */
@@ -274,7 +274,7 @@ float mv_to_therm_resistance(uint32_t mv)
     therm_res = (Vtemp * R1) / (Vin - Vtemp);
 
     // Catch invalid resistance values, set to 500 ohm if negative
-    if(therm_res < 500)
+    if(therm_res < 500 || mv > 1799)
         therm_res = 500;
 
     NRF_LOG_INFO("therm res: " NRF_LOG_FLOAT_MARKER" \n", NRF_LOG_FLOAT(therm_res));
@@ -661,6 +661,17 @@ void pack_lin_reg_values_into_packet(char report_packet[45], uint16_t *pack_len)
    *pack_len = len+2;
 }
 
+void check_for_pwroff(char **packet)
+{
+    char *PWROFF = "PWROFF";
+    if (strstr(*packet, PWROFF) != NULL){
+        NRF_LOG_INFO("received pwroff\n");
+        nrfx_gpiote_out_clear(CHIP_POWER_PIN);
+        nrfx_gpiote_out_uninit(CHIP_POWER_PIN);
+        nrfx_gpiote_uninit();
+    }
+}
+
 /*
  * Checks packet contents to appropriately perform calibration
  */
@@ -668,7 +679,6 @@ void check_for_calibration(char **packet)
 {
     // Possible Strings to be received by pH device
     char *STARTCAL  = "STARTCAL";
-    char *PWROFF    = "PWROFF";
     char *PT        = "PT";
     // Possible strings to send to mobile application
     char CALBEGIN[9] = {"CALBEGIN\n"};   
@@ -682,13 +692,6 @@ void check_for_calibration(char **packet)
     char pH_val_substring[4];
 
     uint32_t err_code;
-
-    if (strstr(*packet, PWROFF) != NULL){
-        NRF_LOG_INFO("received pwroff\n");
-        nrfx_gpiote_out_clear(CHIP_POWER_PIN);
-        nrfx_gpiote_out_uninit(CHIP_POWER_PIN);
-        nrfx_gpiote_uninit();
-    }
 
     if (strstr(*packet, STARTCAL) != NULL) {
         char cal_pts_str[1];
@@ -779,6 +782,7 @@ void nus_data_handler(ble_nus_evt_t * p_evt)
         }
         // Check pack for calibration protocol details
         check_for_calibration(&data_ptr);
+        check_for_pwroff(&data_ptr);
     }
 
     if (p_evt->type == BLE_NUS_EVT_COMM_STARTED)
@@ -928,6 +932,14 @@ static void ble_evt_handler(ble_evt_t const * p_ble_evt, void * p_context)
 
     switch (p_ble_evt->header.evt_id)
     {
+        case 38:
+            // Go to full power off mode in the case of adv timeout
+            NRF_LOG_INFO("CASE 38\n");
+            nrfx_gpiote_out_clear(CHIP_POWER_PIN);
+            nrfx_gpiote_out_uninit(CHIP_POWER_PIN);
+            nrfx_gpiote_uninit();
+            break;
+
         case BLE_GATTS_EVT_SYS_ATTR_MISSING:
             NRF_LOG_INFO("INSIDE SYS ATTR MISSING");
             // No system attributes have been stored.
