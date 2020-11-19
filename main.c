@@ -278,7 +278,7 @@ double mv_to_therm_resistance(uint32_t mv)
     therm_res = (Vtemp * R1) / (Vin - Vtemp);
 
     // Catch invalid resistance values, set to 500 ohm if negative
-    if(therm_res < 500)
+    if(therm_res < 500 || mv > 1799)
         therm_res = 500;
 
     return therm_res;
@@ -326,6 +326,21 @@ double calculate_celsius_from_mv(uint32_t mv)
 
     return celsius;
 }
+
+/* Takes SAADC mV reading as input and returns the actual battery
+ * voltage, recorded at time of sensor reading. Battery voltage
+ * is connected to a voltage divider with constant resistors
+ * R1 = 3M and R2 = 1M. 
+ */
+uint32_t calculate_battvoltage_from_mv(uint32_t batt_mv)
+{
+    // batt_mv = real_batt_voltage * (R2 / (R1 + R2))
+    // real_batt_voltage = batt_mv * ((R1 + R2) / R2)
+    uint32_t R1 = 3000000;
+    uint32_t R2 = 1000000;
+    return batt_mv * ((R1 + R2) / R2);
+}
+
 
 /**@brief Function for assert macro callback.
  *
@@ -1350,7 +1365,7 @@ void create_bluetooth_packet(uint32_t ph_val,   uint32_t na_val,
     pack_mv_value(na_val, total_packet, 20, 4);
     pack_mv_value(k_val,  total_packet, 25, 4);
     pack_temperature_val(temp_val, total_packet, 30);
-    pack_mv_value(batt_val, total_packet, 35, 4);  
+    pack_mv_value(calculate_battvoltage_from_mv(batt_val), total_packet, 35, 4);  
 }
 
 uint32_t saadc_result_to_mv(uint32_t saadc_result)
