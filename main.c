@@ -952,6 +952,9 @@ static void ble_evt_handler(ble_evt_t const * p_ble_evt, void * p_context)
             APP_ERROR_CHECK(err_code);
             CONNECTION_MADE = true;
 
+            // Set TX power to highest setting
+            sd_ble_gap_tx_power_set(BLE_GAP_TX_POWER_ROLE_ADV, m_conn_handle, 4);
+
             NRF_LOG_INFO("CONNECTION MADE (ble_gap_evt) \n");
 
             break;
