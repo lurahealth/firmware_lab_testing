@@ -1281,7 +1281,8 @@ void pack_calibrated_ph_val(uint32_t ph_val, uint32_t temp_val, uint8_t* total_p
     // If calibration has been performed, store real pH in [0-3],
     // and store the raw millivolt data in the last field [15-18]
     else if (CAL_PERFORMED) {
-      float real_pH  = calculate_pH_from_mV(sensor_temp_comp(ph_val, temp_val));
+      //float real_pH  = calculate_pH_from_mV(sensor_temp_comp(ph_val, temp_val));
+      float real_pH  = calculate_pH_from_mV(ph_val);
       real_pH = validate_float_range(real_pH);
       float pH_decimal_vals = (real_pH - floor(real_pH)) * 100;
       // Round pH values to 0.25 pH accuracy
