@@ -120,7 +120,7 @@
 
 #define APP_ADV_INTERVAL                510                                         /**< The advertising interval (in units of 0.625 ms. This value corresponds to 40 ms). */
 
-#define APP_ADV_DURATION                18000                                       /**< The advertising duration (180 seconds) in units of 10 milliseconds. */
+#define APP_ADV_DURATION                1500                                       /**< The advertising duration (180 seconds) in units of 10 milliseconds. */
 
 #define MIN_CONN_INTERVAL               MSEC_TO_UNITS(20, UNIT_1_25_MS)             /**< Minimum acceptable connection interval (20 ms), Connection interval uses 1.25 ms units. */
 #define MAX_CONN_INTERVAL               MSEC_TO_UNITS(200, UNIT_1_25_MS)             /**< Maximum acceptable connection interval (200 ms), Connection interval uses 1.25 ms units. */
@@ -201,6 +201,13 @@ bool     NA_IS_READ        = false;
 bool     K_IS_READ         = false;
 bool     BATTERY_IS_READ   = false;
 bool     CONNECTION_MADE   = false;
+
+/*
+ *  Used to set advertising timeout & disconnection behaviour,
+ *  true  = restart advertising on disconnect or timeout
+ *  false = go to full power off mode on disconnect or timeout 
+ */
+ bool PERSISTENT_BLE_ADV = true;
 
 /* GLOBALS USED FOR CALIBRATION */
 #define  PH_CAL 0
@@ -617,6 +624,25 @@ void set_calibration_params(char **packet)
     NRF_LOG_INFO("*** Current cal analyte: %d ***\n", CURR_ANALYTE);
 }
 
+void check_for_pwroff(char **packet)
+{
+    char *PWROFF = "PWROFF";
+    if (strstr(*packet, PWROFF) != NULL){
+        NRF_LOG_INFO("received pwroff\n");
+        nrfx_gpiote_out_clear(CHIP_POWER_PIN);
+        nrfx_gpiote_out_uninit(CHIP_POWER_PIN);
+        nrfx_gpiote_uninit();
+    }
+}
+
+void check_for_stayon(char **packet)
+{
+    char *STAYON = "STAYON";
+    if (strstr(*packet, STAYON) != NULL){
+        PERSISTENT_BLE_ADV = true;
+    }
+}
+
 /*
  * Checks packet contents to appropriately perform calibration
  */
@@ -625,7 +651,6 @@ void check_for_calibration(char **packet)
     uint32_t err_code;
     // Possible Strings to be received by pH device
     char *STARTCAL  = "STARTCAL_";
-    char *PWROFF    = "PWROFF";
     char *PT        = "PT";
     // Possible strings to send to mobile application
     char *CALBEGIN = "CALBEGIN";
@@ -633,12 +658,6 @@ void check_for_calibration(char **packet)
     // Variables to hold sizes of strings for ble_nus_send function
     uint16_t SIZE_BEGIN = 9;
     uint16_t SIZE_CONF  = 8;
-
-    // If packet contains "PWROFF", turn off chip power
-    if (strstr(*packet, PWROFF) != NULL){
-        NRF_LOG_INFO("received pwroff\n");
-        nrfx_gpiote_out_clear(CHIP_POWER_PIN);
-    }
 
     // If packet starts with "STARTCAL", parse out calibration 
     if (strstr(*packet, STARTCAL) != NULL) {
@@ -722,6 +741,8 @@ void nus_data_handler(ble_nus_evt_t * p_evt)
         }
         // Check pack for calibration protocol details
         check_for_calibration(&data_ptr);
+        check_for_pwroff(&data_ptr);
+        check_for_stayon(&data_ptr);
     }
 
     if (p_evt->type == BLE_NUS_EVT_COMM_STARTED)
@@ -871,6 +892,18 @@ static void ble_evt_handler(ble_evt_t const * p_ble_evt, void * p_context)
 
     switch (p_ble_evt->header.evt_id)
     {
+
+        case 38:
+            // Go to full power off mode in the case of adv timeout
+            NRF_LOG_INFO("CASE 38\n");
+            if (PERSISTENT_BLE_ADV) {
+                advertising_start(false);
+            } else {
+                nrfx_gpiote_out_clear(CHIP_POWER_PIN);
+                nrfx_gpiote_out_uninit(CHIP_POWER_PIN);
+                nrfx_gpiote_uninit();
+            }
+            break;
         case BLE_GATTS_EVT_SYS_ATTR_MISSING:
             NRF_LOG_INFO("INSIDE SYS ATTR MISSING");
             // No system attributes have been stored.
@@ -902,8 +935,14 @@ static void ble_evt_handler(ble_evt_t const * p_ble_evt, void * p_context)
             NRF_SAADC->INTENCLR = (SAADC_INTENCLR_END_Clear << SAADC_INTENCLR_END_Pos);  
             NVIC_ClearPendingIRQ(SAADC_IRQn);
             disable_isfet_circuit();
-            // restart advertising
-            advertising_start(false);
+            // Power off
+            if (PERSISTENT_BLE_ADV) {
+                advertising_start(false);
+            } else {
+                nrfx_gpiote_out_clear(CHIP_POWER_PIN);
+                nrfx_gpiote_out_uninit(CHIP_POWER_PIN);
+                nrfx_gpiote_uninit();
+            }
 
             break;
 
@@ -1216,6 +1255,27 @@ double calculate_px_from_mv(uint32_t mv_val, uint8_t analyte)
     return ((double)mv_val * MVALS_ARR[analyte]) + BVALS_ARR[analyte];
 }
 
+// Returns 99.9 if val is >= 100.0, returns 0.1 if val is < 0
+float validate_float_range(float val)
+{
+    if (val > 99.9) {
+        return 99.9;
+    } else if (val < 0.0) {
+        return 0.1;
+    } else {
+        return val;
+    }
+}
+
+// Returns 3000 (max mV range) if val is > 3000
+uint32_t validate_uint_range(uint32_t val)
+{
+    if (val > 3000)
+        return 3000;
+    else
+        return val;
+}
+
 /* Calculates the real pH value from mV value, and then packs 
  * calibrated pH value into total_packet[0-3], rounded to nearest 0.25 pH.
  * Stores each digit from packet[p] to packet[p+3]
@@ -1224,6 +1284,7 @@ void pack_calibrated_ph_val(uint32_t ph_mv_val, uint8_t* total_packet, uint8_t p
 {
     uint32_t ASCII_DIG_BASE = 48;
     double real_pH  = calculate_px_from_mv(ph_mv_val, PH_CAL);
+    real_pH = validate_float_range(real_pH);
     double pH_decimal_vals = (real_pH - floor(real_pH)) * 100;
     // Round pH decimal values to 0.25 pH accuracy
     pH_decimal_vals = round(pH_decimal_vals / 25) * 25;
@@ -1256,6 +1317,7 @@ void pack_calibrated_k_val(uint32_t k_mv_val, uint8_t* total_packet, uint8_t p)
 {
     uint32_t ASCII_DIG_BASE = 48;
     double pK_value = calculate_px_from_mv(k_mv_val, K_CAL);
+    pK_value = validate_float_range(pK_value);
     double k_mmol_L = px_to_mmol_per_L(pK_value);
     double k_decimal_vals = (k_mmol_L - floor(k_mmol_L)) * 100;
     // Round K decimal values to nearest 0.1 accuracy
@@ -1279,6 +1341,7 @@ void pack_calibrated_na_val(uint32_t na_mv_val, uint8_t* total_packet, uint8_t p
 {
     uint32_t ASCII_DIG_BASE = 48;
     double pNa_value = calculate_px_from_mv(na_mv_val, NA_CAL);
+    pNa_value = validate_float_range(pNa_value);
     double na_mmol_L = px_to_mmol_per_L(pNa_value);
     double na_decimal_vals = (na_mmol_L - floor(na_mmol_L)) * 100;
     // Round K decimal values to nearest 0.1 accuracy
@@ -1307,7 +1370,7 @@ void pack_mv_value(uint32_t mv_val, uint8_t* total_packet, uint8_t p, uint8_t l)
     uint32_t temp = 0;            // hold intermediate divisions of variables
     // Packing protocol for number abcd: 
     //  [... 0, 0, 0, d] --> [... 0, 0, c, d] --> ... --> [... a, b, c, d]
-    temp = mv_val;
+    temp = validate_uint_range(mv_val);
     for(int i = p+l-1; i >= p; i--){
         if (i == p+l-1) total_packet[i] = (uint8_t)(temp % 10 + ASCII_DIG_BASE);
         else {
@@ -1324,6 +1387,7 @@ void pack_temperature_val(uint32_t temp_val, uint8_t* total_packet, uint8_t p)
 {
     uint32_t ASCII_DIG_BASE = 48;
     double real_temp = calculate_celsius_from_mv(temp_val);
+    real_temp = validate_float_range(real_temp);
     NRF_LOG_INFO("temp celsius: " NRF_LOG_FLOAT_MARKER " \n", NRF_LOG_FLOAT(real_temp));
     double temp_decimal_vals = (real_temp - floor(real_temp)) * 100;
     total_packet[p]   = (uint8_t) ((uint8_t)floor(real_temp / 10) + ASCII_DIG_BASE);
