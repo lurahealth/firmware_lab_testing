@@ -115,7 +115,7 @@
 
 #define APP_BLE_CONN_CFG_TAG            1                                           /**< A tag identifying the SoftDevice BLE configuration. */
 
-#define DEVICE_NAME                     "Lura_Test"                   /**< Name of device. Will be included in the advertising data. */
+#define DEVICE_NAME                     "Lura_Test3"                   /**< Name of device. Will be included in the advertising data. */
 #define NUS_SERVICE_UUID_TYPE           BLE_UUID_TYPE_VENDOR_BEGIN                  /**< UUID type for the Nordic UART Service (vendor specific). */
 
 #define APP_BLE_OBSERVER_PRIO           3                                           /**< Application's BLE observer priority. You shouldn't need to modify this value. */
@@ -252,6 +252,13 @@ float calculate_celsius_from_mv  (uint32_t mv);
 float validate_float_range        (float val);
 static void advertising_start   (bool erase_bonds);
 uint32_t saadc_result_to_mv     (uint32_t saadc_result);
+
+/*
+ *  Used to set advertising timeout & disconnection behaviour,
+ *  true  = restart advertising on disconnect or timeout
+ *  false = go to full power off mode on disconnect or timeout 
+ */
+ bool PERSISTENT_BLE_ADV = true;
 
 /*
  * Functions for translating from temperature sensor millivolt output 
@@ -672,6 +679,14 @@ void check_for_pwroff(char **packet)
     }
 }
 
+void check_for_stayon(char **packet)
+{
+    char *STAYON = "STAYON";
+    if (strstr(*packet, STAYON) != NULL){
+        PERSISTENT_BLE_ADV = true;
+    }
+}
+
 /*
  * Checks packet contents to appropriately perform calibration
  */
@@ -783,6 +798,7 @@ void nus_data_handler(ble_nus_evt_t * p_evt)
         // Check pack for calibration protocol details
         check_for_calibration(&data_ptr);
         check_for_pwroff(&data_ptr);
+        check_for_stayon(&data_ptr);
     }
 
     if (p_evt->type == BLE_NUS_EVT_COMM_STARTED)
@@ -935,9 +951,13 @@ static void ble_evt_handler(ble_evt_t const * p_ble_evt, void * p_context)
         case 38:
             // Go to full power off mode in the case of adv timeout
             NRF_LOG_INFO("CASE 38\n");
-            nrfx_gpiote_out_clear(CHIP_POWER_PIN);
-            nrfx_gpiote_out_uninit(CHIP_POWER_PIN);
-            nrfx_gpiote_uninit();
+            if (PERSISTENT_BLE_ADV) {
+                advertising_start(false);
+            } else {
+                nrfx_gpiote_out_clear(CHIP_POWER_PIN);
+                nrfx_gpiote_out_uninit(CHIP_POWER_PIN);
+                nrfx_gpiote_uninit();
+            }
             break;
 
         case BLE_GATTS_EVT_SYS_ATTR_MISSING:
@@ -974,10 +994,14 @@ static void ble_evt_handler(ble_evt_t const * p_ble_evt, void * p_context)
             NRF_SAADC->INTENCLR = (SAADC_INTENCLR_END_Clear << SAADC_INTENCLR_END_Pos);  
             NVIC_ClearPendingIRQ(SAADC_IRQn);
             disable_isfet_circuit();
-            // Power off
-            nrfx_gpiote_out_clear(CHIP_POWER_PIN);
-            nrfx_gpiote_out_uninit(CHIP_POWER_PIN);
-            nrfx_gpiote_uninit();
+            // Power off if PERSISTENT_BLE_ADV is not set
+            if (PERSISTENT_BLE_ADV) {
+                advertising_start(false);
+            } else {
+                nrfx_gpiote_out_clear(CHIP_POWER_PIN);
+                nrfx_gpiote_out_uninit(CHIP_POWER_PIN);
+                nrfx_gpiote_uninit();
+            }
 
             break;
 
@@ -1183,19 +1207,33 @@ static void advertising_start(bool erase_bonds)
 
         APP_ERROR_CHECK(err_code);
     }
+    NRF_LOG_INFO("Advertising started\n");
 }
 
 
 /* This function sets enable pin for ISFET circuitry to HIGH
  */
+//void enable_isfet_circuit(void)
+//{
+//    nrf_drv_gpiote_out_config_t config = NRFX_GPIOTE_CONFIG_OUT_SIMPLE(false);
+//    if(nrf_drv_gpiote_is_init() == false) {
+//          nrf_drv_gpiote_init();
+//    }
+//    nrf_drv_gpiote_out_init(ENABLE_ISFET_PIN, &config);
+//    nrf_drv_gpiote_out_set(ENABLE_ISFET_PIN);
+//}
+
 void enable_isfet_circuit(void)
 {
-    nrf_drv_gpiote_out_config_t config = NRFX_GPIOTE_CONFIG_OUT_SIMPLE(false);
-    if(nrf_drv_gpiote_is_init() == false) {
-          nrf_drv_gpiote_init();
-    }
-    nrf_drv_gpiote_out_init(ENABLE_ISFET_PIN, &config);
-    nrf_drv_gpiote_out_set(ENABLE_ISFET_PIN);
+      nrf_gpio_cfg(
+          ENABLE_ISFET_PIN,
+          NRF_GPIO_PIN_DIR_OUTPUT,
+          NRF_GPIO_PIN_INPUT_DISCONNECT,
+          NRF_GPIO_PIN_NOPULL,
+          GPIO_PIN_CNF_DRIVE_S0H1,
+          NRF_GPIO_PIN_NOSENSE
+      );
+      nrf_gpio_pin_set(ENABLE_ISFET_PIN);
 }
 
 /* This function holds POWER ON line HIGH to keep chip turned on
@@ -1219,10 +1257,15 @@ void turn_chip_power_off(void)
 
 /* This function sets enable pin for ISFET circuitry to LOW
  */
+//void disable_isfet_circuit(void)
+//{
+//     // Redundant, but follows design
+//     nrfx_gpiote_out_clear(ENABLE_ISFET_PIN);
+//}
+
 void disable_isfet_circuit(void)
 {
-     // Redundant, but follows design
-     nrfx_gpiote_out_clear(ENABLE_ISFET_PIN);
+    nrf_gpio_pin_clear(ENABLE_ISFET_PIN);
 }
 
 
@@ -1534,7 +1577,7 @@ void single_shot_timer_handler()
     // Delay to ensure appropriate timing 
     enable_isfet_circuit();       
     // PWM output, ISFET capacitor, etc
-    nrf_delay_ms(100);              
+    nrf_delay_ms(200);              
     // Begin SAADC initialization/start
 
     /* * * * * * * * * * * * * * *
