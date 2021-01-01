@@ -122,7 +122,7 @@
 
 #define APP_ADV_INTERVAL                510                                         /**< The advertising interval (in units of 0.625 ms. This value corresponds to 40 ms). */
 
-#define APP_ADV_DURATION                1500                                       /**< The advertising duration (180 seconds) in units of 10 milliseconds. */
+#define APP_ADV_DURATION                1500                                       /**< The advertising duration in units of 10 milliseconds. */
 
 #define MIN_CONN_INTERVAL               MSEC_TO_UNITS(20, UNIT_1_25_MS)             /**< Minimum acceptable connection interval (20 ms), Connection interval uses 1.25 ms units. */
 #define MAX_CONN_INTERVAL               MSEC_TO_UNITS(200, UNIT_1_25_MS)             /**< Maximum acceptable connection interval (200 ms), Connection interval uses 1.25 ms units. */
@@ -258,7 +258,7 @@ uint32_t saadc_result_to_mv     (uint32_t saadc_result);
  *  true  = restart advertising on disconnect or timeout
  *  false = go to full power off mode on disconnect or timeout 
  */
- bool PERSISTENT_BLE_ADV = true;
+ bool PERSISTENT_BLE_ADV = false;
 
 /*
  * Functions for translating from temperature sensor millivolt output 
@@ -1905,6 +1905,7 @@ int main(void)
 
     // Continue with adjusted calibration state
     ble_stack_init();
+    sd_power_dcdc_mode_set(NRF_POWER_DCDC_ENABLE);
     gap_params_init();
     gatt_init();
     services_init();
