@@ -115,7 +115,7 @@
 
 #define APP_BLE_CONN_CFG_TAG            1                                           /**< A tag identifying the SoftDevice BLE configuration. */
 
-#define DEVICE_NAME                     "Lura_Test"                   /**< Name of device. Will be included in the advertising data. */
+#define DEVICE_NAME                     "Lura_HWdebug"                   /**< Name of device. Will be included in the advertising data. */
 #define NUS_SERVICE_UUID_TYPE           BLE_UUID_TYPE_VENDOR_BEGIN                  /**< UUID type for the Nordic UART Service (vendor specific). */
 
 #define APP_BLE_OBSERVER_PRIO           3                                           /**< Application's BLE observer priority. You shouldn't need to modify this value. */
@@ -223,6 +223,9 @@ float     RVAL_CALIBRATION  = 0;
 float     CAL_PERFORMED     = 0;
 static volatile uint8_t write_flag=0;
 
+/* Used for temperature difference between microsens and winsense */
+bool MICRO = true;
+
 /* Used for reading/writing calibration values to flash */
 #define MVAL_FILE_ID      0x1110
 #define MVAL_REC_KEY      0x1111
@@ -269,6 +272,9 @@ float mv_to_therm_resistance(uint32_t mv)
     float Vtemp     = 0;
     float R1        = 10000.0;
     float Vin       = 1800;
+
+    if(MICRO)
+      Vin = 3300;
 
     Vtemp = (float) mv;
     therm_res = (Vtemp * R1) / (Vin - Vtemp);
@@ -948,7 +954,7 @@ static void ble_evt_handler(ble_evt_t const * p_ble_evt, void * p_context)
             nrfx_saadc_uninit();
             NRF_SAADC->INTENCLR = (SAADC_INTENCLR_END_Clear << SAADC_INTENCLR_END_Pos);  
             NVIC_ClearPendingIRQ(SAADC_IRQn);
-            disable_isfet_circuit();
+            //disable_isfet_circuit();
             // restart advertising
             advertising_start(false);
 
@@ -1161,14 +1167,27 @@ static void advertising_start(bool erase_bonds)
 
 /* This function sets enable pin for ISFET circuitry to HIGH
  */
+//void enable_isfet_circuit(void)
+//{
+//    nrf_drv_gpiote_out_config_t config = NRFX_GPIOTE_CONFIG_OUT_SIMPLE(false);
+//    if(nrf_drv_gpiote_is_init() == false) {
+//          nrf_drv_gpiote_init();
+//    }
+//    nrf_drv_gpiote_out_init(ENABLE_ISFET_PIN, &config);
+//    nrf_drv_gpiote_out_set(ENABLE_ISFET_PIN);
+//}
+
 void enable_isfet_circuit(void)
 {
-    nrf_drv_gpiote_out_config_t config = NRFX_GPIOTE_CONFIG_OUT_SIMPLE(false);
-    if(nrf_drv_gpiote_is_init() == false) {
-          nrf_drv_gpiote_init();
-    }
-    nrf_drv_gpiote_out_init(ENABLE_ISFET_PIN, &config);
-    nrf_drv_gpiote_out_set(ENABLE_ISFET_PIN);
+      nrf_gpio_cfg(
+          ENABLE_ISFET_PIN,
+          NRF_GPIO_PIN_DIR_OUTPUT,
+          NRF_GPIO_PIN_INPUT_DISCONNECT,
+          NRF_GPIO_PIN_NOPULL,
+          GPIO_PIN_CNF_DRIVE_S0H1,
+          NRF_GPIO_PIN_NOSENSE
+      );
+      nrf_gpio_pin_set(ENABLE_ISFET_PIN);
 }
 
 /* This function holds POWER ON line HIGH to keep chip turned on
@@ -1192,11 +1211,17 @@ void turn_chip_power_off(void)
 
 /* This function sets enable pin for ISFET circuitry to LOW
  */
+//void disable_isfet_circuit(void)
+//{
+//     // Redundant, but follows design
+//     nrfx_gpiote_out_clear(ENABLE_ISFET_PIN);
+//}
+
 void disable_isfet_circuit(void)
 {
-     // Redundant, but follows design
-     nrfx_gpiote_out_clear(ENABLE_ISFET_PIN);
+    nrf_gpio_pin_clear(ENABLE_ISFET_PIN);
 }
+
 
 
 void restart_saadc(void)
@@ -1488,7 +1513,7 @@ void disable_pH_voltage_reading(void)
     nrfx_saadc_uninit();
     NVIC_ClearPendingIRQ(SAADC_IRQn);
     while(nrfx_saadc_is_busy()) {}
-    disable_isfet_circuit();
+    //disable_isfet_circuit();
 
     if (!CAL_MODE) {
       // Restart timer
@@ -1504,9 +1529,9 @@ void single_shot_timer_handler()
     APP_ERROR_CHECK(err_code);
 
     // Delay to ensure appropriate timing 
-    enable_isfet_circuit();       
+    //enable_isfet_circuit();       
     // PWM output, ISFET capacitor, etc
-    nrf_delay_ms(100);              
+    //nrf_delay_ms(100);              
     // Begin SAADC initialization/start
 
     /* * * * * * * * * * * * * * *
@@ -1830,7 +1855,7 @@ int main(void)
 
     // Initialize fds and check for calibration values
     fds_init_helper();
-    check_calibration_state();
+    // check_calibration_state();
 
     // Continue with adjusted calibration state
     ble_stack_init();
@@ -1840,6 +1865,9 @@ int main(void)
     advertising_init();
     conn_params_init();
     peer_manager_init();
+
+    // Turn on hardware logic permanently for debugging
+    enable_isfet_circuit();
 
     // Create application timer and begin advertising
     err_code = app_timer_create(&m_timer_id,

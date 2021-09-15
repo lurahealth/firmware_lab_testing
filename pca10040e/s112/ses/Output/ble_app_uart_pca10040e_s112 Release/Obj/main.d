@@ -1,5 +1,5 @@
 Output/ble_app_uart_pca10040e_s112\ Release/Obj/main.o: \
- /home/noah/programming/firmware/nRF5_SDK_15.2.0_9412b96_STABLE/examples/ble_peripheral/LURA_TESTING_APP/main.c \
+ /home/noah/programming/firmware/nRF5_SDK_15.2.0_9412b96_STABLE/examples/ble_peripheral/LURA__HW_DEBUG/main.c \
  /usr/share/segger_embedded_studio_for_arm_4.22/include/stdint.h \
  /usr/share/segger_embedded_studio_for_arm_4.22/include/string.h \
  /usr/share/segger_embedded_studio_for_arm_4.22/include/__crossworks.h \
